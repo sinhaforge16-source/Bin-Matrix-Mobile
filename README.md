@@ -29,9 +29,9 @@ The application features a complete **dual-persona workflow** tailored for both 
 ### 👤 Citizen / User Portal
 1. **Language Onboarding**: One-tap selection between English and Sinhala (සිංහල) with instant UI adaptation.
 2. **User Authentication**:
-   - Sign up / Register account with Name, Location, Email, Password, and Smart Bin Key.
-   - Sign in with saved profile or quick demo credentials (`user` / `1234`).
-   - Social login entrypoints (Google, Facebook, Apple).
+   - Sign in with **Username** and **Password** (or quick demo credentials `admin` / `admin123` or `user` / `1234`).
+   - Sign up / Register account with Name, Location, Email, and Password.
+   - Social login entrypoints (Google Sign-In integration via OAuth).
 3. **Smart Bin IoT Dashboard**:
    - Category monitoring: **Plastic** (Orange), **Paper** (Blue), and **Organic** (Green).
    - Smooth animated fill level gauge with cubic easing and warning thresholds.
@@ -60,12 +60,12 @@ The application features a complete **dual-persona workflow** tailored for both 
    - Real-time status toggling between pending (red `?`) and collected (green `✔`).
    - Dynamic collection counter (e.g. `3/6 Collected`).
    - Route termination action (**END**) with summary confirmation dialogs.
-5. **Interactive 2D Street Map View (`Map view`)**:
-   - Detailed city street grid with landmark labeling (*Hell's Kitchen, Broadway, Times Square, Bryant Park*).
-   - Thick route polyline connecting collection stops (`1 → 2 → 3 → 4 → 6 → 5`).
-   - Live GPS truck indicator with pulsing signal dot.
-   - Interactive pins: green for completed stops, red for pending stops.
-   - Quick **BINS** vertical sidebar for instant stop selection and verification.
+5. **Dual-Mode Route Map & Google Maps Navigation (`DriverMapViewScreen`)**:
+   - **Mode Switcher**: Easily toggle between **2D Vector Blueprint** street grid and live **Google Map View**.
+   - **Google Maps Turn-by-Turn Navigation**: Deep-links natively to Google Maps driving navigation (`google.navigation:q=` on Android, `comgooglemaps://` on iOS) for individual stops or entire multi-stop routes.
+   - **Real GPS Coordinates**: Waypoint pins for Colombo, Dehiwala, Wellawatte, and Mount Lavinia.
+   - **Real-Time Telemetry Sync**: Marking a stop completed updates both mobile UI and triggers instant `PATCH /api/bins/:id` backend updates.
+   - **Interactive BINS Sidebar**: Vertical numbered circular badges for rapid status checking and collection confirmation.
 6. **Driver Account (`Driver account`)**:
    - Driver profile (*Hashibara inosuke* | `DRI-AA123`).
    - Truck registration indicator (`CAN-2258`).
