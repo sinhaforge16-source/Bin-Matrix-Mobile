@@ -35,7 +35,7 @@ export interface Translations {
   // Login
   loginTitle: string;
   loginSubtitle: string;
-  binKeyLoginPlaceholder: string;
+  usernameLoginPlaceholder: string;
   passwordLoginPlaceholder: string;
   forgotPassword: string;
   signInBtn: string;
@@ -124,8 +124,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
 
     loginTitle: 'Hi, welcome back',
     loginSubtitle: 'Your smart bin is waiting, check status and updates instantly.',
-    binKeyLoginPlaceholder: 'Bin Key / Username (user)',
-    passwordLoginPlaceholder: 'Password (1234)',
+    usernameLoginPlaceholder: 'Username',
+    passwordLoginPlaceholder: 'Password',
     forgotPassword: 'Forgot your password?',
     signInBtn: 'Sign in',
     createNewAccount: 'Create new account',
@@ -208,8 +208,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
 
     loginTitle: 'ආයුබෝවන්, නැවත සාදරයෙන් පිළිගනිමු',
     loginSubtitle: 'ඔබගේ ස්මාර්ට් බඳුන සූදානම්, තත්ත්වය ක්ෂණිකව පරීක්ෂා කරන්න.',
-    binKeyLoginPlaceholder: 'බඳුන් යතුර / පරිශීලක නාමය (user)',
-    passwordLoginPlaceholder: 'මුරපදය (1234)',
+    usernameLoginPlaceholder: 'පරිශීලක නාමය',
+    passwordLoginPlaceholder: 'මුරපදය',
     forgotPassword: 'මුරපදය අමතකද?',
     signInBtn: 'ඇතුල් වන්න',
     createNewAccount: 'නව ගිණුමක් සාදන්න',

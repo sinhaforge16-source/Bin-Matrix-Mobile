@@ -36,13 +36,13 @@ export const LoginScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
-  const [binKeyOrUsername, setBinKeyOrUsername] = useState('admin');
+  const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
   const handleSignIn = async () => {
-    const inputIdentifier = binKeyOrUsername.trim();
+    const inputIdentifier = username.trim();
     const inputPassword = password.trim();
 
     if (!inputIdentifier || !inputPassword) {
@@ -82,9 +82,9 @@ export const LoginScreen: React.FC<Props> = ({
 
       const isRegisteredMatch = Boolean(
         registeredUser &&
-          (lowerId === registeredUser.binKey.toLowerCase() ||
-            lowerId === registeredUser.email.toLowerCase() ||
-            lowerId === registeredUser.name.toLowerCase()) &&
+          (lowerId === (registeredUser.binKey || '').toLowerCase() ||
+            lowerId === (registeredUser.email || '').toLowerCase() ||
+            lowerId === (registeredUser.name || '').toLowerCase()) &&
           (!registeredUser.password || inputPassword === registeredUser.password)
       );
 
@@ -118,10 +118,10 @@ export const LoginScreen: React.FC<Props> = ({
 
   const handleFillDemo = (type: 'admin' | 'user') => {
     if (type === 'admin') {
-      setBinKeyOrUsername('admin');
+      setUsername('admin');
       setPassword('admin123');
     } else {
-      setBinKeyOrUsername('user');
+      setUsername('user');
       setPassword('1234');
     }
     setErrorMessage('');
@@ -195,11 +195,11 @@ export const LoginScreen: React.FC<Props> = ({
           <View style={styles.form}>
             <TextInput
               style={styles.input}
-              placeholder={t.binKeyLoginPlaceholder}
+              placeholder={t.usernameLoginPlaceholder}
               placeholderTextColor="#94A3B8"
-              value={binKeyOrUsername}
+              value={username}
               onChangeText={(text) => {
-                setBinKeyOrUsername(text);
+                setUsername(text);
                 setErrorMessage('');
               }}
               autoCapitalize="none"
