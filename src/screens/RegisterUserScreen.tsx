@@ -9,12 +9,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CornerLines } from '../components/CornerLines';
 import { GoogleIcon, FacebookIcon, AppleIcon } from '../components/CommonIcons';
 import { RegisterMinimalVector } from '../components/MinimalAuthVectors';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
+import { googleAuthService } from '../services/googleAuthService';
 
 interface Props {
   language?: Language;
@@ -42,8 +45,10 @@ export const RegisterUserScreen: React.FC<Props> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [binKey, setBinKey] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSignUp = () => {
+  const handleSignUp = async () => {
     if (!name.trim() || !password.trim()) {
       Alert.alert(
         language === 'si' ? 'අවශ්‍ය ක්ෂේත්‍ර' : 'Required Fields',
@@ -54,13 +59,103 @@ export const RegisterUserScreen: React.FC<Props> = ({
       return;
     }
 
-    onSignUpSuccess({
-      name: name.trim(),
-      location: location.trim() || 'Colombo, Sri Lanka',
-      email: email.trim() || 'user@binmatrix.com',
-      binKey: binKey.trim() || 'BIN-9082-LK',
-      password: password.trim(),
-    });
+    if (password.trim().length < 6) {
+      Alert.alert(
+        language === 'si' ? 'මුරපද දෝෂයකි' : 'Invalid Password',
+        language === 'si'
+          ? 'මුරපදය අවම වශයෙන් අක්ෂර 6 ක් විය යුතුය.'
+          : 'Password must be at least 6 characters long.'
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage('');
+
+    const rawUsername = (email.trim() ? email.trim().split('@')[0] : name.trim())
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_');
+
+    try {
+      // Connect to Backend API: POST /api/auth/register
+      const response = await apiService.register({
+        username: rawUsername || `user_${Date.now()}`,
+        password: password.trim(),
+        email: email.trim() || `${rawUsername || 'user'}@binmatrix.com`,
+        fullName: name.trim(),
+        role: 'user',
+      });
+
+      setIsLoading(false);
+
+      if (response && response.success) {
+        onSignUpSuccess({
+          name: response.user?.fullName || name.trim(),
+          location: location.trim() || 'Colombo, Sri Lanka',
+          email: response.user?.email || email.trim() || 'user@binmatrix.com',
+          binKey: binKey.trim() || 'BIN-9082-LK',
+          password: password.trim(),
+        });
+      } else {
+        setErrorMessage(response.message || 'Registration failed');
+        Alert.alert(language === 'si' ? 'ලියාපදිංචිය අසාර්ථකයි' : 'Registration Failed', response.message);
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      const msg = err.message || 'Network error';
+      setErrorMessage(msg);
+
+      // Offer fallback if backend server is not running or unreachable
+      Alert.alert(
+        language === 'si' ? 'සම්බන්ධතා ගැටලුවක්' : 'Connection Notice',
+        `${msg}\n\n${
+          language === 'si'
+            ? 'නිරූපණ මාදිලියෙන් ඉදිරියට යාමට කැමතිද?'
+            : 'Would you like to continue in offline/demo mode?'
+        }`,
+        [
+          { text: t.cancel, style: 'cancel' },
+          {
+            text: language === 'si' ? 'ඔව්, ඉදිරියට යන්න' : 'Continue Offline',
+            onPress: () => {
+              onSignUpSuccess({
+                name: name.trim(),
+                location: location.trim() || 'Colombo, Sri Lanka',
+                email: email.trim() || 'user@binmatrix.com',
+                binKey: binKey.trim() || 'BIN-9082-LK',
+                password: password.trim(),
+              });
+            },
+          },
+        ]
+      );
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const res = await googleAuthService.signInWithGoogle({
+        role: 'user',
+        defaultBinKey: binKey.trim() || undefined,
+      });
+      setIsLoading(false);
+      if (res.success && res.user) {
+        onSignUpSuccess({
+          name: res.user.fullName || res.user.username,
+          location: location.trim() || 'Colombo, Sri Lanka',
+          email: res.user.email || 'user@binmatrix.com',
+          binKey: res.binKey || binKey.trim() || 'BIN-9082-LK',
+          password: password.trim() || undefined,
+        });
+      } else {
+        setErrorMessage(res.message || 'Google registration could not be completed.');
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Google registration error.');
+    }
   };
 
   return (
@@ -105,6 +200,12 @@ export const RegisterUserScreen: React.FC<Props> = ({
             <Text style={styles.mainTitle}>{t.registerTitle}</Text>
             <Text style={styles.subTitle}>{t.registerSubtitle}</Text>
           </View>
+
+          {errorMessage ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          ) : null}
 
           {/* Input Form Fields */}
           <View style={styles.form}>
@@ -155,11 +256,16 @@ export const RegisterUserScreen: React.FC<Props> = ({
 
             {/* Sign Up CTA Button */}
             <TouchableOpacity
-              style={styles.btnSignUp}
+              style={[styles.btnSignUp, isLoading && styles.btnDisabled]}
               onPress={handleSignUp}
               activeOpacity={0.88}
+              disabled={isLoading}
             >
-              <Text style={styles.btnSignUpText}>{t.signUpBtn}</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.btnSignUpText}>{t.signUpBtn}</Text>
+              )}
             </TouchableOpacity>
 
             {/* Already have an account link */}
@@ -181,7 +287,12 @@ export const RegisterUserScreen: React.FC<Props> = ({
 
           {/* Social Icons */}
           <View style={styles.socialRow}>
-            <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.socialBtn}
+              onPress={handleGoogleSignUp}
+              activeOpacity={0.7}
+              disabled={isLoading}
+            >
               <GoogleIcon size={24} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
@@ -259,6 +370,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 16,
   },
+  errorBanner: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#F87171',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 6,
+  },
+  errorText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    textAlign: 'center',
+  },
   form: {
     marginTop: 10,
     gap: 12,
@@ -285,6 +409,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 3,
+  },
+  btnDisabled: {
+    opacity: 0.7,
   },
   btnSignUpText: {
     color: '#FFFFFF',

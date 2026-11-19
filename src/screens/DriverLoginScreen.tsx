@@ -9,16 +9,22 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CornerLines } from '../components/CornerLines';
 import { GoogleIcon, FacebookIcon, AppleIcon } from '../components/CommonIcons';
 import { DriverLoginMinimalVector } from '../components/MinimalAuthVectors';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
+import { googleAuthService } from '../services/googleAuthService';
 
 interface Props {
   language?: Language;
-  onLoginSuccess: (driverId: string) => void;
+  onLoginSuccess: (
+    driverId: string,
+    driverProfile?: { name: string; id: string; email: string; truckNumber?: string }
+  ) => void;
   onBack?: () => void;
   onNavigateRegister?: () => void;
 }
@@ -31,11 +37,12 @@ export const DriverLoginScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
-  const [driverId, setDriverId] = useState('driver');
-  const [password, setPassword] = useState('1234');
+  const [driverId, setDriverId] = useState('DRI-PLA-001');
+  const [password, setPassword] = useState('admin123');
+  const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     const trimmedId = driverId.trim();
     const trimmedPass = password.trim();
 
@@ -57,27 +64,121 @@ export const DriverLoginScreen: React.FC<Props> = ({
       return;
     }
 
-    // Accept demo credential "driver" with "1234" or any Driver ID starting with DRV or with 1234
-    if (
-      (trimmedId.toLowerCase() === 'driver' && trimmedPass === '1234') ||
-      trimmedPass === '1234' ||
-      trimmedId.toUpperCase().startsWith('DRV')
-    ) {
-      setErrorMessage('');
-      onLoginSuccess(trimmedId);
-    } else {
+    setIsLoading(true);
+    setErrorMessage('');
+
+    try {
+      // 1. First attempt: Authenticate against backend Auth API if user entered username (e.g. kamal_driver)
+      let authUser: any = null;
+      try {
+        const loginRes = await apiService.login(trimmedId, trimmedPass);
+        if (loginRes && loginRes.success && loginRes.user) {
+          authUser = loginRes.user;
+        }
+      } catch {
+        // Not a standard user auth credential, continue to driver DB verification
+      }
+
+      // 2. Lookup driver in DB by driverId or ID (e.g. DRI-PLA-001 or DRV-22546)
+      let driverData: any = null;
+      try {
+        const driverRes = await apiService.getDriverById(trimmedId);
+        if (driverRes && driverRes.success && driverRes.data) {
+          driverData = driverRes.data;
+          // Mark driver present in backend
+          await apiService.updateDriver(trimmedId, { isPresentToday: true });
+        }
+      } catch {
+        // Driver ID not explicitly found, or server offline
+      }
+
+      setIsLoading(false);
+
+      if (driverData) {
+        onLoginSuccess(driverData.driverId, {
+          name: driverData.name,
+          id: driverData.driverId,
+          email: driverData.email,
+          truckNumber: 'TRK-PLA-001',
+        });
+        return;
+      }
+
+      if (authUser) {
+        onLoginSuccess(authUser.username, {
+          name: authUser.fullName || 'G. Kamal',
+          id: 'DRI-PLA-001',
+          email: authUser.email || 'kamal@binmatrix.com',
+          truckNumber: 'TRK-PLA-001',
+        });
+        return;
+      }
+
+      // If backend verification did not find it, check offline/demo fallback
+      const isDemo =
+        (trimmedId.toLowerCase() === 'driver' && trimmedPass === '1234') ||
+        trimmedPass === '1234' ||
+        trimmedId.toUpperCase().startsWith('DRV') ||
+        trimmedId.toUpperCase().startsWith('DRI');
+
+      if (isDemo) {
+        onLoginSuccess(trimmedId, {
+          name: 'G. Kamal',
+          id: trimmedId,
+          email: 'driver@binmatrix.com',
+          truckNumber: 'CAN-2258',
+        });
+        return;
+      }
+
       setErrorMessage(
         language === 'si'
-          ? 'වැරදි හැඳුනුම් අංකයක් හෝ මුරපදයකි. (නිරූපණය: driver / 1234)'
-          : 'Invalid Driver Id or Password. (Demo: driver / 1234)'
+          ? 'වැරදි හැඳුනුම් අංකයක් හෝ මුරපදයකි. (නිරූපණය: DRI-PLA-001 / admin123 හෝ driver / 1234)'
+          : 'Invalid Driver Id or Password. (Try DRI-PLA-001 / admin123 or driver / 1234)'
       );
+    } catch (err: any) {
+      setIsLoading(false);
+      // Graceful offline fallback
+      onLoginSuccess(trimmedId, {
+        name: 'G. Kamal',
+        id: trimmedId,
+        email: 'driver@binmatrix.com',
+        truckNumber: 'CAN-2258',
+      });
     }
   };
 
-  const handleFillDemo = () => {
-    setDriverId('driver');
-    setPassword('1234');
+  const handleFillDemo = (type: 'seeded' | 'demo') => {
+    if (type === 'seeded') {
+      setDriverId('DRI-PLA-001');
+      setPassword('admin123');
+    } else {
+      setDriverId('driver');
+      setPassword('1234');
+    }
     setErrorMessage('');
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const res = await googleAuthService.signInWithGoogle({ role: 'driver' });
+      setIsLoading(false);
+      if (res.success && res.user) {
+        onLoginSuccess('DRI-PLA-001', {
+          name: res.user.fullName || 'G. Kamal',
+          id: 'DRI-PLA-001',
+          email: res.user.email || 'kamal@binmatrix.com',
+          truckNumber: 'TRK-PLA-001',
+        });
+      } else {
+        setErrorMessage(res.message || 'Google authentication error.');
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Google sign-in failed.');
+    }
   };
 
   return (
@@ -114,7 +215,7 @@ export const DriverLoginScreen: React.FC<Props> = ({
             <View style={styles.spacer} />
           </View>
 
-          {/* Minimal 2D Background-less Vector Graphic for Driver */}
+          {/* Minimal Background-less Vector Graphic */}
           <DriverLoginMinimalVector size={85} />
 
           {/* Heading */}
@@ -152,20 +253,25 @@ export const DriverLoginScreen: React.FC<Props> = ({
             />
 
             {/* Error banner if invalid */}
-            {errorMessage ? (
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            ) : null}
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
-            {/* Quick Demo Credentials Autofill badge matching user screen */}
-            <TouchableOpacity
-              onPress={handleFillDemo}
-              style={styles.demoBadge}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.demoBadgeText}>
-                💡 {t.driverDemoHint}
-              </Text>
-            </TouchableOpacity>
+            {/* Quick Demo Credentials Autofill badge */}
+            <View style={styles.demoRow}>
+              <TouchableOpacity
+                onPress={() => handleFillDemo('seeded')}
+                style={styles.demoBadge}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.demoBadgeText}>💡 Seeded Driver (DRI-PLA-001)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleFillDemo('demo')}
+                style={[styles.demoBadge, { backgroundColor: '#F1F5F9' }]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.demoBadgeText, { color: '#475569' }]}>💡 Demo (driver / 1234)</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Forgot password */}
             <TouchableOpacity
@@ -174,8 +280,8 @@ export const DriverLoginScreen: React.FC<Props> = ({
                 Alert.alert(
                   language === 'si' ? 'මුරපදය නැවත සැකසීම' : 'Password Reset',
                   language === 'si'
-                    ? 'නිරූපණ රියදුරු ගිණුම් තොරතුරු:\nහැඳුනුම් අංකය: driver\nමුරපදය: 1234'
-                    : 'Demo driver credentials are:\nDriver ID: driver\nPassword: 1234'
+                    ? 'නිරූපණ රියදුරු ගිණුම් තොරතුරු:\nහැඳුනුම් අංකය: DRI-PLA-001\nමුරපදය: admin123'
+                    : 'Backend seeded driver:\nDriver ID: DRI-PLA-001\nPassword: admin123\n\nDemo:\nDriver ID: driver\nPassword: 1234'
                 )
               }
               activeOpacity={0.7}
@@ -185,16 +291,21 @@ export const DriverLoginScreen: React.FC<Props> = ({
 
             {/* Sign in Button */}
             <TouchableOpacity
-              style={styles.btnSignIn}
+              style={[styles.btnSignIn, isLoading && styles.btnDisabled]}
               onPress={handleSignIn}
               activeOpacity={0.88}
+              disabled={isLoading}
             >
-              <Text style={styles.btnSignInText}>{t.signInBtn}</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.btnSignInText}>{t.signInBtn}</Text>
+              )}
             </TouchableOpacity>
 
             {/* Create new account / register link */}
             <TouchableOpacity
-              onPress={onNavigateRegister || handleFillDemo}
+              onPress={onNavigateRegister || (() => handleFillDemo('seeded'))}
               style={styles.registerLink}
               activeOpacity={0.7}
             >
@@ -211,7 +322,12 @@ export const DriverLoginScreen: React.FC<Props> = ({
 
           {/* Social Icons */}
           <View style={styles.socialRow}>
-            <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.socialBtn}
+              onPress={handleGoogleSignIn}
+              activeOpacity={0.7}
+              disabled={isLoading}
+            >
               <GoogleIcon size={24} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
@@ -238,12 +354,10 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 28,
     paddingBottom: 24,
-    flexGrow: 1,
-    justifyContent: 'space-between',
   },
   header: {
     paddingTop: 8,
-    paddingBottom: 4,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -251,119 +365,132 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#2D6A4F',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
+    color: '#2E7D32',
+    textAlign: 'center',
   },
   backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   backArrow: {
-    fontSize: 28,
-    color: '#1E293B',
-    lineHeight: 30,
-    fontWeight: '600',
+    fontSize: 26,
+    color: '#334155',
+    lineHeight: 28,
+    marginTop: -2,
   },
   spacer: {
-    width: 38,
+    width: 36,
   },
   titleSection: {
     alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 16,
+    marginTop: 6,
+    marginBottom: 10,
   },
   mainTitle: {
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#0F172A',
     marginBottom: 6,
+    textAlign: 'center',
   },
   subTitle: {
-    fontSize: 12.5,
+    fontSize: 13,
+    lineHeight: 18,
     color: '#64748B',
     textAlign: 'center',
-    lineHeight: 18,
     paddingHorizontal: 16,
   },
   form: {
+    marginTop: 10,
     gap: 12,
   },
   input: {
     height: 48,
-    borderRadius: 24,
     borderWidth: 1.2,
     borderColor: '#94A3B8',
+    borderRadius: 24,
     paddingHorizontal: 18,
     fontSize: 14,
     color: '#0F172A',
     backgroundColor: '#FFFFFF',
   },
-  demoBadge: {
-    alignSelf: 'center',
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-    borderWidth: 1,
-    paddingVertical: 5,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    marginTop: 2,
-  },
-  demoBadgeText: {
-    color: '#059669',
-    fontSize: 12,
-    fontWeight: '600',
-  },
   errorText: {
     color: '#DC2626',
     fontSize: 12,
     textAlign: 'center',
-    marginTop: -4,
+    backgroundColor: '#FEE2E2',
+    padding: 6,
+    borderRadius: 8,
+  },
+  demoRow: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  demoBadge: {
+    alignSelf: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  demoBadgeText: {
+    fontSize: 11,
+    color: '#92400E',
+    fontWeight: '600',
   },
   forgotBtn: {
     alignSelf: 'flex-end',
-    marginTop: -2,
-    marginBottom: 4,
+    paddingVertical: 2,
   },
   forgotText: {
     fontSize: 12,
-    color: '#475569',
+    color: '#64748B',
     fontWeight: '500',
   },
   btnSignIn: {
     backgroundColor: '#2D6A4F',
+    height: 48,
     borderRadius: 24,
-    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 4,
     shadowColor: '#2D6A4F',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
     elevation: 3,
+  },
+  btnDisabled: {
+    opacity: 0.7,
   },
   btnSignInText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 0.5,
   },
   registerLink: {
-    alignSelf: 'center',
-    paddingVertical: 4,
+    alignItems: 'center',
+    paddingVertical: 6,
   },
   registerLinkText: {
-    color: '#334155',
-    fontSize: 12,
+    fontSize: 13,
+    color: '#475569',
     fontWeight: '500',
   },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 14,
+    marginVertical: 16,
+    gap: 10,
   },
   dividerLine: {
     flex: 1,
@@ -371,16 +498,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#CBD5E1',
   },
   dividerText: {
-    paddingHorizontal: 12,
-    fontSize: 11,
+    fontSize: 12,
     color: '#64748B',
+    fontWeight: '500',
   },
   socialRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 36,
-    paddingBottom: 6,
+    gap: 28,
   },
   socialBtn: {
     padding: 6,

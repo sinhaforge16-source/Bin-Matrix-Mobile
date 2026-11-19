@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SmartBinVector, WasteCategory } from '../components/SmartBinVector';
@@ -13,6 +14,8 @@ import {
   NavProfileIcon,
 } from '../components/CommonIcons';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
+import { Bin } from '../types/apiTypes';
 
 interface Props {
   language?: Language;
@@ -27,6 +30,7 @@ interface Props {
 
 interface CategoryDetails {
   key: WasteCategory;
+  backendName: 'Plastic' | 'Paper' | 'Organic waste';
   label: string;
   percentage: number;
   percentColor: string;
@@ -34,9 +38,10 @@ interface CategoryDetails {
   pickupTime: string;
 }
 
-const CATEGORIES: CategoryDetails[] = [
+const INITIAL_CATEGORIES: CategoryDetails[] = [
   {
     key: 'plastic',
+    backendName: 'Plastic',
     label: 'Plastic',
     percentage: 50,
     percentColor: '#16A34A', // Green text 50%
@@ -45,6 +50,7 @@ const CATEGORIES: CategoryDetails[] = [
   },
   {
     key: 'paper',
+    backendName: 'Paper',
     label: 'Paper',
     percentage: 20,
     percentColor: '#2563EB', // Blue text 20%
@@ -53,6 +59,7 @@ const CATEGORIES: CategoryDetails[] = [
   },
   {
     key: 'organic',
+    backendName: 'Organic waste',
     label: 'Organic Waste',
     percentage: 80,
     percentColor: '#EF4444', // Red warning text 80%
@@ -63,14 +70,70 @@ const CATEGORIES: CategoryDetails[] = [
 
 export const DashboardScreen: React.FC<Props> = ({
   language = 'en',
+  userProfile,
   onNavigateChatbot,
   onNavigateAccount,
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
   const [selectedCategoryIndex, setSelectedCategoryIndex] = useState(0);
+  const [categories, setCategories] = useState<CategoryDetails[]>(INITIAL_CATEGORIES);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [liveBin, setLiveBin] = useState<Bin | null>(null);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
 
-  const currentCategory = CATEGORIES[selectedCategoryIndex] || CATEGORIES[0];
+  const currentCategory = categories[selectedCategoryIndex] || categories[0];
+
+  const fetchLiveDashboardData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      // 1. Fetch dashboard summary with fill levels for Plastic, Paper, Organic waste
+      const summaryRes = await apiService.getDashboardSummary();
+      if (summaryRes && summaryRes.success && summaryRes.data?.bins?.fillLevels) {
+        const fillMap = summaryRes.data.bins.fillLevels;
+        setCategories((prev) =>
+          prev.map((cat) => {
+            const livePercent = fillMap[cat.backendName];
+            if (typeof livePercent === 'number') {
+              let color = '#16A34A';
+              if (livePercent >= 80) color = '#EF4444';
+              else if (livePercent >= 50) color = '#D97706';
+              else color = '#2563EB';
+
+              return {
+                ...cat,
+                percentage: livePercent,
+                percentColor: color,
+              };
+            }
+            return cat;
+          })
+        );
+        setIsLiveConnected(true);
+      }
+
+      // 2. Fetch specific user bin if registered
+      if (userProfile?.binKey) {
+        try {
+          const binRes = await apiService.getBinById(userProfile.binKey);
+          if (binRes && binRes.success && binRes.data) {
+            setLiveBin(binRes.data);
+          }
+        } catch {
+          // If specific binId not found in DB, query by category
+        }
+      }
+    } catch {
+      // Fallback gracefully without interrupting UI
+      setIsLiveConnected(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [userProfile?.binKey]);
+
+  useEffect(() => {
+    fetchLiveDashboardData();
+  }, [fetchLiveDashboardData]);
 
   const getLocalizedCategoryName = (key: WasteCategory) => {
     switch (key) {
@@ -86,11 +149,11 @@ export const DashboardScreen: React.FC<Props> = ({
   };
 
   const handleNextCategory = () => {
-    setSelectedCategoryIndex((prev) => (prev + 1) % CATEGORIES.length);
+    setSelectedCategoryIndex((prev) => (prev + 1) % categories.length);
   };
 
   const handlePrevCategory = () => {
-    setSelectedCategoryIndex((prev) => (prev - 1 + CATEGORIES.length) % CATEGORIES.length);
+    setSelectedCategoryIndex((prev) => (prev - 1 + categories.length) % categories.length);
   };
 
   return (
@@ -106,23 +169,46 @@ export const DashboardScreen: React.FC<Props> = ({
         {/* Top Header */}
         <View style={styles.topHeader}>
           {/* Category Title from mockup ("plastic" / "paper" / "Organic Waste") */}
-          <Text style={styles.screenTitle}>{getLocalizedCategoryName(currentCategory.key)}</Text>
+          <View style={styles.headerLeft}>
+            <Text style={styles.screenTitle}>{getLocalizedCategoryName(currentCategory.key)}</Text>
+            {isLiveConnected ? (
+              <View style={styles.liveIndicator}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>Live Telemetry</Text>
+              </View>
+            ) : null}
+          </View>
 
-          {/* Profile Avatar Button -> goes to Account */}
-          <TouchableOpacity
-            style={styles.profileAvatarBtn}
-            onPress={() => onNavigateAccount?.()}
-            activeOpacity={0.7}
-          >
-            <NavProfileIcon size={28} color="#2D6A4F" />
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              style={styles.refreshBtn}
+              onPress={fetchLiveDashboardData}
+              activeOpacity={0.7}
+              disabled={isRefreshing}
+            >
+              {isRefreshing ? (
+                <ActivityIndicator size="small" color="#2D6A4F" />
+              ) : (
+                <Text style={styles.refreshText}>↻</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Profile Avatar Button -> goes to Account */}
+            <TouchableOpacity
+              style={styles.profileAvatarBtn}
+              onPress={() => onNavigateAccount?.()}
+              activeOpacity={0.7}
+            >
+              <NavProfileIcon size={28} color="#2D6A4F" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Smart Bin Dashboard View (Plastic / Paper / Organic) */}
         <View style={styles.content}>
           {/* Category Switcher Pills */}
           <View style={styles.categoryPillRow}>
-            {CATEGORIES.map((cat, idx) => {
+            {categories.map((cat, idx) => {
               const isActive = idx === selectedCategoryIndex;
               return (
                 <TouchableOpacity
@@ -165,6 +251,11 @@ export const DashboardScreen: React.FC<Props> = ({
                 fillPercentage={currentCategory.percentage}
                 localizedTitle={getLocalizedCategoryName(currentCategory.key)}
               />
+              {liveBin ? (
+                <Text style={styles.binMetaId}>
+                  Bin: {liveBin.binId} • {liveBin.status}
+                </Text>
+              ) : null}
             </View>
 
             {/* Right Gauge / Level Indicator */}
@@ -259,11 +350,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  headerLeft: {
+    flexDirection: 'column',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   screenTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#64748B',
     textTransform: 'capitalize',
+  },
+  liveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#16A34A',
+  },
+  liveText: {
+    fontSize: 10,
+    color: '#16A34A',
+    fontWeight: '600',
+  },
+  refreshBtn: {
+    padding: 6,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshText: {
+    fontSize: 16,
+    color: '#2D6A4F',
+    fontWeight: '700',
+    marginTop: -2,
   },
   profileAvatarBtn: {
     padding: 4,
@@ -308,6 +439,12 @@ const styles = StyleSheet.create({
   binContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  binMetaId: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 6,
+    fontWeight: '500',
   },
   gaugeContainer: {
     position: 'absolute',

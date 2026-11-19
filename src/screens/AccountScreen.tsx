@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
 import { UKFlag, SriLankaFlag } from '../components/FlagIcons';
 import Svg, { Circle, Path, ClipPath, Defs } from 'react-native-svg';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
 
 interface Props {
   language?: Language;
@@ -94,6 +95,30 @@ export const AccountScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
+  const [profile, setProfile] = useState(userProfile);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchUserProfile = async () => {
+      try {
+        const res = await apiService.getMe();
+        if (isMounted && res && res.success && res.user) {
+          setProfile((prev) => ({
+            ...prev,
+            name: res.user.fullName || res.user.username || prev.name,
+            email: res.user.email || prev.email,
+          }));
+        }
+      } catch {
+        // Use supplied profile
+      }
+    };
+
+    fetchUserProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const toggleLanguage = () => {
     const nextLang = language === 'en' ? 'si' : 'en';
@@ -115,6 +140,20 @@ export const AccountScreen: React.FC<Props> = ({
     }
   };
 
+  const handleLogoutPress = () => {
+    Alert.alert(t.logOutConfirmTitle, t.logOutConfirmMsg, [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.logOut,
+        style: 'destructive',
+        onPress: () => {
+          apiService.clearAuth();
+          onLogout();
+        },
+      },
+    ]);
+  };
+
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
       <View style={styles.container}>
@@ -131,8 +170,8 @@ export const AccountScreen: React.FC<Props> = ({
           {/* Avatar & User Name */}
           <View style={styles.avatarSection}>
             <UserAvatarGraphic size={106} />
-            <Text style={styles.userName}>{userProfile.name}</Text>
-            <Text style={styles.binKey}>{userProfile.binKey}</Text>
+            <Text style={styles.userName}>{profile.name}</Text>
+            <Text style={styles.binKey}>{profile.binKey}</Text>
           </View>
 
           {/* Form Fields Section */}
@@ -144,7 +183,7 @@ export const AccountScreen: React.FC<Props> = ({
                 <View style={styles.iconWrapper}>
                   <MailIcon size={20} color="#000000" />
                 </View>
-                <Text style={styles.fieldValue}>{userProfile.email}</Text>
+                <Text style={styles.fieldValue}>{profile.email}</Text>
               </View>
             </View>
 
@@ -181,12 +220,7 @@ export const AccountScreen: React.FC<Props> = ({
             {/* Log Out CTA Button */}
             <TouchableOpacity
               style={styles.btnLogOut}
-              onPress={() => {
-                Alert.alert(t.logOutConfirmTitle, t.logOutConfirmMsg, [
-                  { text: t.cancel, style: 'cancel' },
-                  { text: t.logOut, style: 'destructive', onPress: onLogout },
-                ]);
-              }}
+              onPress={handleLogoutPress}
               activeOpacity={0.88}
             >
               <Text style={styles.btnLogOutText}>{t.logOut}</Text>
@@ -267,90 +301,90 @@ const styles = StyleSheet.create({
   },
   avatarSection: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 24,
   },
   userName: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#0F172A',
-    marginTop: 14,
-    marginBottom: 4,
-    textAlign: 'center',
+    marginTop: 12,
   },
   binKey: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
-    letterSpacing: 0.8,
-    textAlign: 'center',
+    color: '#2D6A4F',
+    marginTop: 2,
+    letterSpacing: 0.5,
   },
   fieldsGroup: {
-    gap: 20,
+    gap: 16,
   },
   fieldItem: {
-    gap: 8,
+    gap: 6,
   },
   fieldLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+    marginLeft: 4,
   },
   pillCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#A7D7A9', // Light green pill from mockup
+    backgroundColor: '#F8FAFC',
     borderWidth: 1.2,
-    borderColor: '#2D6A4F',
+    borderColor: '#94A3B8',
     borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 13,
+    paddingHorizontal: 16,
+    height: 48,
   },
   pillLeftGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
   },
   iconWrapper: {
-    marginRight: 14,
+    marginRight: 10,
   },
   fieldValue: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#0F172A',
   },
   addAccountRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 6,
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
     marginTop: 4,
   },
   addAccountText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     color: '#1E513A',
   },
   btnLogOut: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2D6A4F', // Dark eco-green
-    paddingVertical: 15,
-    borderRadius: 28,
-    gap: 12,
-    marginTop: 14,
-    shadowColor: '#2D6A4F',
+    gap: 8,
+    backgroundColor: '#DC2626',
+    borderRadius: 24,
+    height: 48,
+    marginTop: 8,
+    shadowColor: '#DC2626',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 3,
   },
   btnLogOutText: {
-    fontSize: 16,
-    fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 0.3,
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   bottomNavBar: {
     backgroundColor: '#1E3A2F',

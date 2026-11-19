@@ -9,16 +9,19 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CornerLines } from '../components/CornerLines';
 import { GoogleIcon, FacebookIcon, AppleIcon } from '../components/CommonIcons';
 import { LoginMinimalVector } from '../components/MinimalAuthVectors';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
+import { googleAuthService } from '../services/googleAuthService';
 
 interface Props {
   language?: Language;
-  onLoginSuccess: (userProfile: { name: string; binKey: string }) => void;
+  onLoginSuccess: (userProfile: { name: string; binKey: string; email?: string }) => void;
   onNavigateRegister: () => void;
   onBack?: () => void;
   registeredUser?: { name: string; email: string; binKey: string; password?: string } | null;
@@ -33,48 +36,116 @@ export const LoginScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
-  const [binKeyOrUsername, setBinKeyOrUsername] = useState('user');
-  const [password, setPassword] = useState('1234');
+  const [binKeyOrUsername, setBinKeyOrUsername] = useState('admin');
+  const [password, setPassword] = useState('admin123');
+  const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSignIn = () => {
-    const inputIdentifier = binKeyOrUsername.trim().toLowerCase();
+  const handleSignIn = async () => {
+    const inputIdentifier = binKeyOrUsername.trim();
     const inputPassword = password.trim();
 
-    // Check dummy user "user" / "1234" or registered user
-    const isDummyUser = inputIdentifier === 'user' && inputPassword === '1234';
-    const isRegisteredMatch =
-      Boolean(registeredUser &&
-      (inputIdentifier === registeredUser.binKey.toLowerCase() ||
-        inputIdentifier === registeredUser.email.toLowerCase() ||
-        inputIdentifier === registeredUser.name.toLowerCase()) &&
-      (!registeredUser.password || inputPassword === registeredUser.password));
-
-    if (isDummyUser || isRegisteredMatch) {
-      setErrorMessage('');
-      onLoginSuccess({
-        name: isRegisteredMatch && registeredUser ? registeredUser.name : 'Bin Matrix User',
-        binKey: isRegisteredMatch && registeredUser ? registeredUser.binKey : 'BM-7749-LK',
-      });
-    } else {
+    if (!inputIdentifier || !inputPassword) {
       setErrorMessage(
         language === 'si'
-          ? 'වලංගු නොවන තොරතුරු. පරිශීලක නාමය: user සහ මුරපදය: 1234 භාවිතා කරන්න'
-          : 'Invalid credentials. Use username: user and password: 1234'
+          ? 'කරුණාකර පරිශීලක නාමය සහ මුරපදය ඇතුළත් කරන්න'
+          : 'Please enter both username and password'
       );
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage('');
+
+    try {
+      // Connect to Backend API: POST /api/auth/login
+      const response = await apiService.login(inputIdentifier, inputPassword);
+
+      setIsLoading(false);
+
+      if (response && response.success && response.user) {
+        onLoginSuccess({
+          name: response.user.fullName || response.user.username,
+          binKey: registeredUser?.binKey || 'BIN-AA123',
+          email: response.user.email,
+        });
+        return;
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+
+      // Check fallback: local registered user or demo credentials
+      const lowerId = inputIdentifier.toLowerCase();
+      const isDummyUser =
+        (lowerId === 'user' && inputPassword === '1234') ||
+        (lowerId === 'admin' && inputPassword === 'admin123');
+
+      const isRegisteredMatch = Boolean(
+        registeredUser &&
+          (lowerId === registeredUser.binKey.toLowerCase() ||
+            lowerId === registeredUser.email.toLowerCase() ||
+            lowerId === registeredUser.name.toLowerCase()) &&
+          (!registeredUser.password || inputPassword === registeredUser.password)
+      );
+
+      if (isDummyUser || isRegisteredMatch) {
+        setErrorMessage('');
+        onLoginSuccess({
+          name:
+            isRegisteredMatch && registeredUser
+              ? registeredUser.name
+              : lowerId === 'admin'
+              ? 'Admin Manager'
+              : 'Bin Matrix User',
+          binKey: isRegisteredMatch && registeredUser ? registeredUser.binKey : 'BM-7749-LK',
+          email: isRegisteredMatch && registeredUser ? registeredUser.email : undefined,
+        });
+        return;
+      }
+
+      const errMsg = err.message || 'Login failed. Please check credentials or server connection.';
+      setErrorMessage(errMsg);
       Alert.alert(
         language === 'si' ? 'ඇතුල් වීම අසාර්ථකයි' : 'Login Failed',
-        language === 'si'
-          ? 'කරුණාකර නිරූපණ ගිණුම් තොරතුරු ඇතුළත් කරන්න:\n\nපරිශීලක නාමය / බඳුන් යතුර: user\nමුරපදය: 1234'
-          : 'Please enter the demo credentials:\n\nUsername / Bin Key: user\nPassword: 1234'
+        `${errMsg}\n\n${
+          language === 'si'
+            ? 'නිරූපණ තොරතුරු: admin / admin123 හෝ user / 1234'
+            : 'Demo credentials: admin / admin123 or user / 1234'
+        }`
       );
     }
   };
 
-  const handleFillDemo = () => {
-    setBinKeyOrUsername('user');
-    setPassword('1234');
+  const handleFillDemo = (type: 'admin' | 'user') => {
+    if (type === 'admin') {
+      setBinKeyOrUsername('admin');
+      setPassword('admin123');
+    } else {
+      setBinKeyOrUsername('user');
+      setPassword('1234');
+    }
     setErrorMessage('');
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const res = await googleAuthService.signInWithGoogle({ role: 'user' });
+      setIsLoading(false);
+      if (res.success && res.user) {
+        onLoginSuccess({
+          name: res.user.fullName || res.user.username,
+          binKey: res.binKey || 'BIN-AA123',
+          email: res.user.email,
+        });
+      } else {
+        setErrorMessage(res.message || 'Google sign-in could not be completed.');
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Google sign-in error.');
+    }
   };
 
   return (
@@ -147,20 +218,25 @@ export const LoginScreen: React.FC<Props> = ({
             />
 
             {/* Error banner if invalid */}
-            {errorMessage ? (
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            ) : null}
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
             {/* Quick Demo Credentials Autofill badge */}
-            <TouchableOpacity
-              onPress={handleFillDemo}
-              style={styles.demoBadge}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.demoBadgeText}>
-                💡 {t.demoHint}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.demoRow}>
+              <TouchableOpacity
+                onPress={() => handleFillDemo('admin')}
+                style={styles.demoBadge}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.demoBadgeText}>💡 Admin (admin / admin123)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleFillDemo('user')}
+                style={[styles.demoBadge, { backgroundColor: '#F1F5F9' }]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.demoBadgeText, { color: '#475569' }]}>💡 User (user / 1234)</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Forgot password */}
             <TouchableOpacity
@@ -169,8 +245,8 @@ export const LoginScreen: React.FC<Props> = ({
                 Alert.alert(
                   language === 'si' ? 'මුරපදය නැවත සැකසීම' : 'Password Reset',
                   language === 'si'
-                    ? 'නිරූපණ ගිණුම් තොරතුරු:\nපරිශීලක නාමය: user\nමුරපදය: 1234'
-                    : 'Demo credentials are:\nUsername: user\nPassword: 1234'
+                    ? 'නිරූපණ ගිණුම් තොරතුරු:\nපරිශීලක නාමය: admin / admin123 හෝ user / 1234'
+                    : 'Backend seeded credentials:\nUsername: admin\nPassword: admin123\n\nDemo user:\nUsername: user\nPassword: 1234'
                 )
               }
               activeOpacity={0.7}
@@ -180,11 +256,16 @@ export const LoginScreen: React.FC<Props> = ({
 
             {/* Sign in Button */}
             <TouchableOpacity
-              style={styles.btnSignIn}
+              style={[styles.btnSignIn, isLoading && styles.btnDisabled]}
               onPress={handleSignIn}
               activeOpacity={0.88}
+              disabled={isLoading}
             >
-              <Text style={styles.btnSignInText}>{t.signInBtn}</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.btnSignInText}>{t.signInBtn}</Text>
+              )}
             </TouchableOpacity>
 
             {/* Create new account link */}
@@ -206,7 +287,12 @@ export const LoginScreen: React.FC<Props> = ({
 
           {/* Social Icons */}
           <View style={styles.socialRow}>
-            <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.socialBtn}
+              onPress={handleGoogleSignIn}
+              activeOpacity={0.7}
+              disabled={isLoading}
+            >
               <GoogleIcon size={24} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.socialBtn} activeOpacity={0.7}>
@@ -236,7 +322,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingTop: 8,
-    paddingBottom: 16,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -267,8 +353,8 @@ const styles = StyleSheet.create({
   },
   titleSection: {
     alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 16,
+    marginTop: 6,
+    marginBottom: 10,
   },
   mainTitle: {
     fontSize: 22,
@@ -282,10 +368,11 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#64748B',
     textAlign: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
   form: {
-    gap: 14,
+    marginTop: 10,
+    gap: 12,
   },
   input: {
     height: 48,
@@ -297,26 +384,33 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     backgroundColor: '#FFFFFF',
   },
-  demoBadge: {
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignSelf: 'center',
-  },
-  demoBadgeText: {
-    fontSize: 12,
-    color: '#15803D',
-  },
-  demoBold: {
-    fontWeight: '700',
-  },
   errorText: {
     color: '#DC2626',
     fontSize: 12,
     textAlign: 'center',
+    backgroundColor: '#FEE2E2',
+    padding: 6,
+    borderRadius: 8,
+  },
+  demoRow: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  demoBadge: {
+    alignSelf: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  demoBadgeText: {
+    fontSize: 11,
+    color: '#92400E',
+    fontWeight: '600',
   },
   forgotBtn: {
     alignSelf: 'flex-end',
@@ -324,7 +418,7 @@ const styles = StyleSheet.create({
   },
   forgotText: {
     fontSize: 12,
-    color: '#334155',
+    color: '#64748B',
     fontWeight: '500',
   },
   btnSignIn: {
@@ -333,12 +427,15 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
+    marginTop: 4,
     shadowColor: '#2D6A4F',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 3,
+  },
+  btnDisabled: {
+    opacity: 0.7,
   },
   btnSignInText: {
     color: '#FFFFFF',
@@ -357,7 +454,7 @@ const styles = StyleSheet.create({
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 16,
     gap: 10,
   },
   dividerLine: {

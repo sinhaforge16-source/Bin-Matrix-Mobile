@@ -1,36 +1,82 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Language, TRANSLATIONS } from '../utils/translations';
 import { NavProfileIcon } from '../components/CommonIcons';
+import { apiService } from '../services/apiService';
+import { Route } from '../types/apiTypes';
 
 interface Props {
   language?: Language;
   driverId?: string;
-  onStartRoute: () => void;
+  onStartRoute: (routeData?: Route) => void;
   onLogout?: () => void;
 }
 
 export const DriverHomeScreen: React.FC<Props> = ({
   language = 'en',
-  driverId = 'DRV-22546',
+  driverId = 'DRI-PLA-001',
   onStartRoute,
   onLogout,
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
+  const [activeRoute, setActiveRoute] = useState<Route | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
 
   // Format today's date as DD/MM/YYYY
   const today = new Date();
   const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(
     today.getMonth() + 1
   ).padStart(2, '0')}/${today.getFullYear()}`;
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDriverRoute = async () => {
+      try {
+        // Query backend for routes assigned to driver or active routes
+        const routesRes = await apiService.getRoutes();
+        if (isMounted && routesRes && routesRes.success && routesRes.data && routesRes.data.length > 0) {
+          // Find route for this driver, or first available route
+          const matched =
+            routesRes.data.find(
+              (r) =>
+                r.assignedDriver?.driverId === driverId ||
+                r.assignedDriver?._id === driverId
+            ) || routesRes.data[0];
+          setActiveRoute(matched);
+        }
+      } catch {
+        // Graceful fallback to default route
+      }
+    };
+
+    fetchDriverRoute();
+    return () => {
+      isMounted = false;
+    };
+  }, [driverId]);
+
+  const handleStartPress = async () => {
+    setIsStarting(true);
+    try {
+      if (activeRoute?._id && activeRoute.status !== 'In Progress') {
+        await apiService.updateRoute(activeRoute._id, { status: 'In Progress' });
+      }
+    } catch {
+      // Continue regardless
+    } finally {
+      setIsStarting(false);
+      onStartRoute(activeRoute || undefined);
+    }
+  };
 
   return (
     <View
@@ -64,16 +110,23 @@ export const DriverHomeScreen: React.FC<Props> = ({
       {/* Centered Content Matching Prototype */}
       <View style={styles.centerCard}>
         <Text style={styles.greetingText}>{t.driverHello}</Text>
-        <Text style={styles.routeReadyText}>{t.driverRouteReady}</Text>
+        <Text style={styles.routeReadyText}>
+          {activeRoute ? `${activeRoute.routeName}\n${t.driverRouteReady}` : t.driverRouteReady}
+        </Text>
         <Text style={styles.dateText}>{formattedDate}</Text>
 
         {/* START White Pill Button */}
         <TouchableOpacity
           style={styles.startBtn}
-          onPress={onStartRoute}
+          onPress={handleStartPress}
           activeOpacity={0.85}
+          disabled={isStarting}
         >
-          <Text style={styles.startBtnText}>{t.driverStart}</Text>
+          {isStarting ? (
+            <ActivityIndicator color="#1E513A" size="small" />
+          ) : (
+            <Text style={styles.startBtnText}>{t.driverStart}</Text>
+          )}
         </TouchableOpacity>
       </View>
 

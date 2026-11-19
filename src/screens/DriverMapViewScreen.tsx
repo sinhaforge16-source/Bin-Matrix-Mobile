@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   TouchableOpacity,
   Dimensions,
   StatusBar,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, {
@@ -24,6 +26,8 @@ import {
   NavProfileIcon,
 } from '../components/CommonIcons';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
+import { googleMapsService } from '../services/googleMapsService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,9 +35,13 @@ interface MapPinData {
   id: number;
   x: number;
   y: number;
+  latitude: number;
+  longitude: number;
   isCompleted: boolean;
   code: string;
   location: string;
+  fillLevel?: number;
+  rawId?: string;
 }
 
 interface Props {
@@ -57,7 +65,7 @@ const MapPinMarker: React.FC<{
 
   return (
     <G transform={`translate(${x}, ${y})`} onPress={onPress}>
-      {/* Translucent circular radius halo (e.g. for active stop 2) */}
+      {/* Translucent circular radius halo */}
       {hasHalo && (
         <Circle cx="0" cy="0" r="30" fill="#94A3B8" fillOpacity="0.22" />
       )}
@@ -91,6 +99,69 @@ const MapPinMarker: React.FC<{
   );
 };
 
+const DEFAULT_PINS: MapPinData[] = [
+  {
+    id: 1,
+    x: 180,
+    y: 430,
+    latitude: 6.8732,
+    longitude: 79.8598,
+    isCompleted: true,
+    code: 'Deh-2213-Ai',
+    location: 'Tamil, Sangam Institute, Wellawatte (Stop 1)',
+  },
+  {
+    id: 2,
+    x: 75,
+    y: 360,
+    latitude: 6.8421,
+    longitude: 79.8642,
+    isCompleted: true,
+    code: 'Deh-2233-Gn',
+    location: 'Galle Rd, Dehiwala-Mount Lavinia (Stop 2)',
+  },
+  {
+    id: 3,
+    x: 48,
+    y: 285,
+    latitude: 6.8315,
+    longitude: 79.8631,
+    isCompleted: false,
+    code: 'Deh-2243-Fa',
+    location: 'Mount Lavinia Beach Rd (Stop 3)',
+  },
+  {
+    id: 4,
+    x: 120,
+    y: 175,
+    latitude: 6.892,
+    longitude: 80.0815,
+    isCompleted: false,
+    code: 'Deh-2314-At',
+    location: 'Hanwella Town Center (Stop 4)',
+  },
+  {
+    id: 5,
+    x: 280,
+    y: 205,
+    latitude: 6.9271,
+    longitude: 79.8612,
+    isCompleted: false,
+    code: 'Deh-3213-Sw',
+    location: 'Carnegie Hall East, Colombo (Stop 5)',
+  },
+  {
+    id: 6,
+    x: 185,
+    y: 155,
+    latitude: 6.9319,
+    longitude: 79.8478,
+    isCompleted: false,
+    code: 'Deh-4213-Tm',
+    location: 'Studio 54 North, Fort (Stop 6)',
+  },
+];
+
 export const DriverMapViewScreen: React.FC<Props> = ({
   language = 'en',
   onNavigateHome,
@@ -98,76 +169,119 @@ export const DriverMapViewScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
+  const [pins, setPins] = useState<MapPinData[]>(DEFAULT_PINS);
+  const [selectedPin, setSelectedPin] = useState<MapPinData | null>(DEFAULT_PINS[1]);
+  const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
+  const [mapImageLoading, setMapImageLoading] = useState(false);
 
-  // Coordinates calibrated to fill map area while leaving sidebar space
-  const [pins, setPins] = useState<MapPinData[]>([
-    {
-      id: 1,
-      x: 180,
-      y: 430,
-      isCompleted: true,
-      code: 'BIN-22546',
-      location: 'Tamil, Sangam Institute, Wellawatte (Stop 1)',
-    },
-    {
-      id: 2,
-      x: 75,
-      y: 360,
-      isCompleted: true,
-      code: 'BIN-22547',
-      location: 'Midtown Center, 8th Ave (Stop 2)',
-    },
-    {
-      id: 3,
-      x: 48,
-      y: 285,
-      isCompleted: false,
-      code: 'BIN-22548',
-      location: 'Gershwin Theatre, Broadway (Stop 3)',
-    },
-    {
-      id: 4,
-      x: 120,
-      y: 175,
-      isCompleted: false,
-      code: 'BIN-22549',
-      location: 'W 52nd St, Broadway (Stop 4)',
-    },
-    {
-      id: 5,
-      x: 280,
-      y: 205,
-      isCompleted: false,
-      code: 'BIN-22550',
-      location: 'Carnegie Hall East (Stop 5)',
-    },
-    {
-      id: 6,
-      x: 185,
-      y: 155,
-      isCompleted: false,
-      code: 'BIN-22551',
-      location: 'Studio 54 North (Stop 6)',
-    },
-  ]);
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLivePins = async () => {
+      try {
+        const summary = await apiService.getBinMonitoringSummary('All');
+        if (
+          isMounted &&
+          summary &&
+          summary.data &&
+          summary.data.mapPins &&
+          summary.data.mapPins.length > 0
+        ) {
+          const apiBins = summary.data.mapPins.slice(0, 6);
+          setPins((prev) =>
+            prev.map((pin, index) => {
+              const liveBin = apiBins[index];
+              if (liveBin) {
+                return {
+                  ...pin,
+                  code: liveBin.binId,
+                  location: `${liveBin.location} (${liveBin.capacityStatus})`,
+                  fillLevel: liveBin.fillLevel,
+                  rawId: liveBin._id,
+                  isCompleted:
+                    liveBin.capacityStatus === 'Normal' && liveBin.fillLevel === 0,
+                };
+              }
+              return pin;
+            })
+          );
+        }
+      } catch {
+        // Fallback to default mock pins
+      }
+    };
 
-  const [selectedPin, setSelectedPin] = useState<MapPinData | null>(pins[1]);
+    fetchLivePins();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-  const handleTogglePin = (id: number) => {
+  const handleTogglePin = async (id: number) => {
+    const targetPin = pins.find((p) => p.id === id);
+    if (!targetPin) return;
+
+    const nextState = !targetPin.isCompleted;
+
     setPins((prev) =>
       prev.map((pin) => {
         if (pin.id === id) {
-          const nextState = !pin.isCompleted;
-          setSelectedPin({ ...pin, isCompleted: nextState });
-          return { ...pin, isCompleted: nextState };
+          const updated = { ...pin, isCompleted: nextState };
+          setSelectedPin(updated);
+          return updated;
         }
         return pin;
       })
     );
+
+    try {
+      await apiService.updateBin(targetPin.rawId || targetPin.code, {
+        fillLevel: nextState ? 0 : 85,
+        capacityStatus: nextState ? 'Normal' : 'Almost Full',
+      });
+    } catch {
+      // Non-blocking sync
+    }
+  };
+
+  const handleLaunchGoogleMaps = (pin?: MapPinData) => {
+    const target = pin || selectedPin || pins.find((p) => !p.isCompleted) || pins[0];
+    if (target) {
+      googleMapsService.openNavigation(
+        { latitude: target.latitude, longitude: target.longitude },
+        target.code
+      );
+    }
+  };
+
+  const handleLaunchFullRouteGoogleMaps = () => {
+    const stops = pins.map((p) => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+    }));
+    googleMapsService.openRouteNavigation(stops, 'Bin Matrix Collection Route');
   };
 
   const mapWidth = SCREEN_WIDTH - 76; // Leave room for right BINS sidebar
   const mapHeight = SCREEN_HEIGHT - insets.top - 70; // Map area above bottom nav
+
+  // Generate Google Static Maps URL
+  const googleMapStaticUrl = googleMapsService.getStaticMapUrl({
+    center: selectedPin
+      ? { latitude: selectedPin.latitude, longitude: selectedPin.longitude }
+      : { latitude: 6.865, longitude: 79.88 },
+    zoom: 13,
+    size: `${Math.round(mapWidth)}x${Math.round(mapHeight)}`,
+    markers: pins.map((p) => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+      label: String(p.id),
+      color: p.isCompleted ? 'green' : 'red',
+    })),
+    pathCoords: pins.map((p) => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+    })),
+  });
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
@@ -176,174 +290,354 @@ export const DriverMapViewScreen: React.FC<Props> = ({
       {/* Main Map & Sidebar Canvas */}
       <View style={styles.mainContainer}>
         {/* ==============================================================
-            1. DETAILED 2D VECTOR CITY STREET MAP
+            MAP CANVAS: VECTOR VIEW OR GOOGLE MAPS VIEW
            ============================================================== */}
         <View style={[styles.mapCanvas, { width: mapWidth, height: mapHeight }]}>
-          <Svg width={mapWidth} height={mapHeight} viewBox="0 0 320 520">
-            <Defs>
-              <LinearGradient id="waterGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor="#CBE5FE" />
-                <Stop offset="100%" stopColor="#BAE6FD" />
-              </LinearGradient>
-              <LinearGradient id="parkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor="#DCFCE7" />
-                <Stop offset="100%" stopColor="#BBF7D0" />
-              </LinearGradient>
-            </Defs>
+          {/* Top Controls: Mode Switcher & Quick Google Nav */}
+          <View style={styles.mapModeBar}>
+            <View style={styles.modeToggleGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.modeToggleBtn,
+                  mapMode === 'vector' && styles.modeToggleBtnActive,
+                ]}
+                onPress={() => setMapMode('vector')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.modeToggleText,
+                    mapMode === 'vector' && styles.modeToggleTextActive,
+                  ]}
+                >
+                  Vector
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modeToggleBtn,
+                  mapMode === 'google' && styles.modeToggleBtnActive,
+                ]}
+                onPress={() => setMapMode('google')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.modeToggleText,
+                    mapMode === 'google' && styles.modeToggleTextActive,
+                  ]}
+                >
+                  Google Map
+                </Text>
+              </TouchableOpacity>
+            </View>
 
-            {/* Base Background: Warm Map Tone */}
-            <Rect width="320" height="520" fill="#F4EFEA" />
+            <TouchableOpacity
+              style={styles.fullRouteQuickBtn}
+              onPress={handleLaunchFullRouteGoogleMaps}
+              activeOpacity={0.85}
+            >
+              <GoogleMapNavIcon size={16} />
+              <Text style={styles.fullRouteQuickText}>Route</Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Hudson River / Water edge (Top Left) */}
-            <Path
-              d="M 0 0 L 110 0 C 95 30, 80 70, 75 110 L 0 110 Z"
-              fill="url(#waterGrad)"
-            />
-            <SvgText x="14" y="24" fill="#0284C7" fontSize="8" fontWeight="600">
-              Hudson New York
-            </SvgText>
+          {mapMode === 'vector' ? (
+            /* 1. DETAILED 2D VECTOR CITY STREET MAP */
+            <Svg width={mapWidth} height={mapHeight} viewBox="0 0 320 520">
+              <Defs>
+                <LinearGradient id="waterGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <Stop offset="0%" stopColor="#CBE5FE" />
+                  <Stop offset="100%" stopColor="#BAE6FD" />
+                </LinearGradient>
+                <LinearGradient id="parkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <Stop offset="0%" stopColor="#DCFCE7" />
+                  <Stop offset="100%" stopColor="#BBF7D0" />
+                </LinearGradient>
+              </Defs>
 
-            {/* Central City Blocks (Beige & Warm Gray Building footprints) */}
-            {/* Grid Block Column 1 */}
-            <Rect x="15" y="125" width="46" height="58" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="15" y="195" width="46" height="64" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="15" y="270" width="46" height="70" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="15" y="350" width="46" height="74" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
+              {/* Base Background: Warm Map Tone */}
+              <Rect width="320" height="520" fill="#F4EFEA" />
 
-            {/* Grid Block Column 2 */}
-            <Rect x="72" y="125" width="54" height="58" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="72" y="195" width="54" height="64" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="72" y="270" width="54" height="70" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="72" y="350" width="54" height="74" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-
-            {/* Grid Block Column 3 */}
-            <Rect x="138" y="125" width="60" height="58" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="138" y="195" width="60" height="64" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="138" y="270" width="60" height="70" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="138" y="350" width="60" height="74" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-
-            {/* Grid Block Column 4 */}
-            <Rect x="210" y="125" width="95" height="58" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="210" y="195" width="95" height="64" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="210" y="270" width="95" height="70" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-            <Rect x="210" y="350" width="95" height="74" rx="4" fill="#EDE4DA" stroke="#E2D7CB" strokeWidth="0.8" />
-
-            {/* Parks / Greenery Zones */}
-            <Rect
-              x="170"
-              y="30"
-              width="145"
-              height="80"
-              rx="6"
-              fill="url(#parkGrad)"
-            />
-            {/* Bryant Park / Lower Greenery */}
-            <Rect x="142" y="440" width="160" height="55" rx="5" fill="url(#parkGrad)" />
-            <SvgText x="160" y="465" fill="#15803D" fontSize="8" fontWeight="600">
-              Bryant Park / MetLife
-            </SvgText>
-
-            {/* Primary Diagonal Avenue (Broadway / Diagonal thoroughfare) */}
-            <Path
-              d="M 120 40 L 40 480"
-              stroke="#FFFFFF"
-              strokeWidth="14"
-              strokeLinecap="round"
-            />
-            <Path
-              d="M 120 40 L 40 480"
-              stroke="#D1C7BA"
-              strokeWidth="1"
-              strokeDasharray="4, 4"
-            />
-
-            {/* City Street Labels matching prototype */}
-            <SvgText x="78" y="160" fill="#78716C" fontSize="7" fontWeight="500">
-              W 53rd St
-            </SvgText>
-            <SvgText x="18" y="185" fill="#B45309" fontSize="8" fontWeight="bold">
-              HELL'S KITCHEN
-            </SvgText>
-            <SvgText x="135" y="172" fill="#78716C" fontSize="7" fontWeight="500">
-              Studio 54
-            </SvgText>
-            <SvgText x="200" y="152" fill="#78716C" fontSize="7" fontWeight="500">
-              Carnegie Hall
-            </SvgText>
-            <SvgText x="90" y="235" fill="#78716C" fontSize="7" fontWeight="500">
-              Broadway Theatre
-            </SvgText>
-            <SvgText x="72" y="280" fill="#78716C" fontSize="7" fontWeight="500">
-              Gershwin Theatre
-            </SvgText>
-            <SvgText x="100" y="340" fill="#78716C" fontSize="7" fontWeight="500">
-              Times Square
-            </SvgText>
-            <SvgText x="182" y="380" fill="#78716C" fontSize="7" fontWeight="500">
-              The Town Hall
-            </SvgText>
-            <SvgText x="145" y="420" fill="#1E293B" fontSize="9" fontWeight="800">
-              MIDTOWN
-            </SvgText>
-
-            {/* ==============================================================
-                2. THICK BLACK ROUTE POLYLINE (Exact connection from prototype)
-                Route: Stop 1 -> Stop 2 -> Stop 3 -> Stop 4 -> Stop 6 -> Stop 5
-               ============================================================== */}
-            <Path
-              d="M 180 430 L 75 360 L 26 385 L 48 285 L 120 175 L 185 155 L 280 205"
-              stroke="#0F172A"
-              strokeWidth="4.5"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-              fill="none"
-            />
-
-            {/* Route Inner Accent Line */}
-            <Path
-              d="M 180 430 L 75 360 L 26 385 L 48 285 L 120 175 L 185 155 L 280 205"
-              stroke="#334155"
-              strokeWidth="2"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-              fill="none"
-            />
-
-            {/* ==============================================================
-                3. CURRENT TRUCK GPS LOCATION MARKER (Cyan Pin & Blue Pulse)
-               ============================================================== */}
-            <G transform="translate(162, 332)">
-              {/* Pulsing circular aura */}
-              <Circle cx="0" cy="0" r="14" fill="#0284C7" fillOpacity="0.18" />
-              {/* Blue Center Location Dot */}
-              <Circle cx="0" cy="0" r="4.5" fill="#0284C7" stroke="#FFFFFF" strokeWidth="1.5" />
-              {/* Cyan Location Pin */}
+              {/* Colombo Coastal / Water edge (Top Left) */}
               <Path
-                d="M 0 -18 C -6 -18, -10 -14, -10 -8 C -10 -1, 0 8, 0 8 C 0 8, 10 -1, 10 -8 C 10 -14, 6 -18, 0 -18 Z"
-                fill="#06B6D4"
-                stroke="#FFFFFF"
+                d="M 0 0 L 110 0 C 95 30, 80 70, 75 110 L 0 110 Z"
+                fill="url(#waterGrad)"
+              />
+              <SvgText x="14" y="24" fill="#0284C7" fontSize="8" fontWeight="600">
+                Colombo Coastal
+              </SvgText>
+
+              {/* Central City Blocks */}
+              <Rect
+                x="15"
+                y="125"
+                width="46"
+                height="58"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="15"
+                y="195"
+                width="46"
+                height="64"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="15"
+                y="270"
+                width="46"
+                height="70"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="15"
+                y="350"
+                width="46"
+                height="74"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+
+              <Rect
+                x="72"
+                y="125"
+                width="54"
+                height="58"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="72"
+                y="195"
+                width="54"
+                height="64"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="72"
+                y="270"
+                width="54"
+                height="70"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="72"
+                y="350"
+                width="54"
+                height="74"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+
+              <Rect
+                x="138"
+                y="125"
+                width="60"
+                height="58"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="138"
+                y="195"
+                width="60"
+                height="64"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="138"
+                y="270"
+                width="60"
+                height="70"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="138"
+                y="350"
+                width="60"
+                height="74"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+
+              <Rect
+                x="210"
+                y="125"
+                width="95"
+                height="58"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="210"
+                y="195"
+                width="95"
+                height="64"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="210"
+                y="270"
+                width="95"
+                height="70"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+              <Rect
+                x="210"
+                y="350"
+                width="95"
+                height="74"
+                rx="4"
+                fill="#EDE4DA"
+                stroke="#E2D7CB"
+                strokeWidth="0.8"
+              />
+
+              {/* Urban Parks */}
+              <Rect
+                x="212"
+                y="18"
+                width="90"
+                height="92"
+                rx="6"
+                fill="url(#parkGrad)"
+                stroke="#86EFAC"
+                strokeWidth="1"
+              />
+              <SvgText
+                x="257"
+                y="65"
+                fill="#15803D"
+                fontSize="9"
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                Viharamahadevi Park
+              </SvgText>
+
+              {/* Main Road Network */}
+              <Path d="M 0 118 L 320 118" stroke="#FFFFFF" strokeWidth="10" />
+              <Path d="M 0 188 L 320 188" stroke="#FFFFFF" strokeWidth="8" />
+              <Path d="M 0 264 L 320 264" stroke="#FFFFFF" strokeWidth="8" />
+              <Path d="M 0 344 L 320 344" stroke="#FFFFFF" strokeWidth="8" />
+              <Path d="M 0 428 L 320 428" stroke="#FFFFFF" strokeWidth="10" />
+
+              {/* Avenues */}
+              <Path d="M 66 0 L 66 520" stroke="#FFFFFF" strokeWidth="9" />
+              <Path d="M 132 0 L 132 520" stroke="#FFFFFF" strokeWidth="9" />
+              <Path d="M 204 0 L 204 520" stroke="#FFFFFF" strokeWidth="9" />
+
+              {/* Diagonal Galle Road / Marine Drive */}
+              <Path
+                d="M 35 110 L 240 440"
+                stroke="#FDE68A"
+                strokeWidth="11"
+                strokeLinecap="round"
+              />
+              <Path
+                d="M 35 110 L 240 440"
+                stroke="#F59E0B"
                 strokeWidth="1.2"
+                strokeDasharray="6,6"
               />
-              <Circle cx="0" cy="-8" r="3" fill="#FFFFFF" />
-            </G>
 
-            {/* ==============================================================
-                4. MAP PINS (1 to 6)
-               ============================================================== */}
-            {pins.map((pin) => (
-              <MapPinMarker
-                key={pin.id}
-                x={pin.x}
-                y={pin.y}
-                id={pin.id}
-                isCompleted={pin.isCompleted}
-                hasHalo={pin.id === 2}
-                onPress={() => handleTogglePin(pin.id)}
+              {/* Connecting Driver Route Waypoint Line */}
+              <Path
+                d={`M ${pins[0]?.x} ${pins[0]?.y} L ${pins[1]?.x} ${pins[1]?.y} L ${pins[2]?.x} ${pins[2]?.y} L ${pins[3]?.x} ${pins[3]?.y} L ${pins[4]?.x} ${pins[4]?.y} L ${pins[5]?.x} ${pins[5]?.y}`}
+                stroke="#0284C7"
+                strokeWidth="3"
+                strokeDasharray="5,4"
+                fill="none"
               />
-            ))}
-          </Svg>
 
-          {/* Quick Info Toast for Selected Pin */}
+              {/* Map Pins */}
+              {pins.map((pin) => (
+                <MapPinMarker
+                  key={pin.id}
+                  id={pin.id}
+                  x={pin.x}
+                  y={pin.y}
+                  isCompleted={pin.isCompleted}
+                  hasHalo={pin.id === 2}
+                  onPress={() => setSelectedPin(pin)}
+                />
+              ))}
+            </Svg>
+          ) : (
+            /* 2. GOOGLE MAPS SATELLITE / STATIC ROUTE VIEW */
+            <View style={styles.googleMapContainer}>
+              <Image
+                source={{ uri: googleMapStaticUrl }}
+                style={{ width: mapWidth, height: mapHeight }}
+                resizeMode="cover"
+                onLoadStart={() => setMapImageLoading(true)}
+                onLoadEnd={() => setMapImageLoading(false)}
+              />
+
+              {mapImageLoading && (
+                <View style={styles.mapLoadingOverlay}>
+                  <ActivityIndicator size="large" color="#16A34A" />
+                  <Text style={styles.mapLoadingText}>Loading Google Map...</Text>
+                </View>
+              )}
+
+              {/* Google Maps Live App Direct Launcher Bar */}
+              <View style={styles.googleLiveOverlay}>
+                <TouchableOpacity
+                  style={styles.openGoogleMapsAppBtn}
+                  onPress={() => handleLaunchGoogleMaps(selectedPin || undefined)}
+                  activeOpacity={0.85}
+                >
+                  <GoogleMapNavIcon size={20} />
+                  <Text style={styles.openGoogleMapsAppText}>
+                    Launch Turn-by-Turn in Google Maps
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Floating Selected Pin Info Card */}
           {selectedPin && (
             <View style={styles.pinInfoToast}>
               <View
@@ -353,11 +647,24 @@ export const DriverMapViewScreen: React.FC<Props> = ({
                 ]}
               />
               <View style={styles.pinInfoTextGroup}>
-                <Text style={styles.pinInfoCode}>{selectedPin.code}</Text>
+                <Text style={styles.pinInfoCode}>
+                  Stop #{selectedPin.id}: {selectedPin.code}
+                </Text>
                 <Text style={styles.pinInfoLocation} numberOfLines={1}>
                   {selectedPin.location}
                 </Text>
               </View>
+
+              {/* Launch Google Maps for this pin */}
+              <TouchableOpacity
+                style={styles.pinMapBtn}
+                onPress={() => handleLaunchGoogleMaps(selectedPin)}
+                activeOpacity={0.8}
+              >
+                <GoogleMapNavIcon size={18} />
+              </TouchableOpacity>
+
+              {/* Toggle Done/Collect */}
               <TouchableOpacity
                 style={[
                   styles.pinToggleBtn,
@@ -367,7 +674,7 @@ export const DriverMapViewScreen: React.FC<Props> = ({
                 activeOpacity={0.8}
               >
                 <Text style={styles.pinToggleBtnText}>
-                  {selectedPin.isCompleted ? '✔' : t.driverStopOk}
+                  {selectedPin.isCompleted ? '✓ Done' : 'Collect'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -375,29 +682,29 @@ export const DriverMapViewScreen: React.FC<Props> = ({
         </View>
 
         {/* ==============================================================
-            5. RIGHT VERTICAL SIDEBAR: "BINS" WITH CIRCULAR PILLS 1 - 6
+            RIGHT SIDEBAR: "BINS" WITH 6 VERTICAL CIRCULAR PILLS
            ============================================================== */}
         <View style={styles.sidebar}>
-          <Text style={styles.sidebarTitle}>{t.binsSidebarTitle}</Text>
+          <Text style={styles.sidebarTitle}>{t.binsSidebarTitle || 'BINS'}</Text>
 
           <View style={styles.binPillList}>
             {pins.map((pin) => {
-              const isDone = pin.isCompleted;
+              const isGreen = pin.isCompleted;
 
               return (
                 <TouchableOpacity
                   key={pin.id}
                   style={[
                     styles.binCircle,
-                    isDone ? styles.binCircleGreen : styles.binCircleRed,
+                    isGreen ? styles.binCircleGreen : styles.binCircleRed,
                   ]}
                   onPress={() => handleTogglePin(pin.id)}
-                  activeOpacity={0.75}
+                  activeOpacity={0.8}
                 >
                   <Text
                     style={[
                       styles.binCircleText,
-                      isDone ? styles.binCircleTextGreen : styles.binCircleTextRed,
+                      isGreen ? styles.binCircleTextGreen : styles.binCircleTextRed,
                     ]}
                   >
                     {pin.id}
@@ -409,16 +716,14 @@ export const DriverMapViewScreen: React.FC<Props> = ({
         </View>
       </View>
 
-      {/* ==============================================================
-          6. BOTTOM NAVIGATION BAR (Matching Prototype)
-         ============================================================== */}
+      {/* Bottom Dark Navigation Bar matching Prototype */}
       <View
         style={[
           styles.bottomNavBar,
           { paddingBottom: Math.max(insets.bottom, 16) },
         ]}
       >
-        {/* Tab 1: Home */}
+        {/* Home Tab */}
         <TouchableOpacity
           style={styles.navItem}
           onPress={onNavigateHome}
@@ -427,15 +732,12 @@ export const DriverMapViewScreen: React.FC<Props> = ({
           <NavHomeIcon size={26} color="#FFFFFF" />
         </TouchableOpacity>
 
-        {/* Tab 2: Map View (Active) */}
-        <TouchableOpacity
-          style={[styles.navItem, styles.navItemActive]}
-          activeOpacity={0.7}
-        >
+        {/* Route Map Tab (Active) */}
+        <TouchableOpacity style={[styles.navItem, styles.navItemActive]} activeOpacity={0.7}>
           <GoogleMapNavIcon size={26} />
         </TouchableOpacity>
 
-        {/* Tab 3: Driver Account */}
+        {/* Profile Tab */}
         <TouchableOpacity
           style={styles.navItem}
           onPress={onNavigateAccount}
@@ -456,25 +758,121 @@ const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#F4EFEA',
   },
   mapCanvas: {
-    flex: 1,
+    backgroundColor: '#F4EFEA',
     position: 'relative',
     overflow: 'hidden',
   },
+  mapModeBar: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    right: 10,
+    zIndex: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modeToggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 3,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  modeToggleBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+  },
+  modeToggleBtnActive: {
+    backgroundColor: '#1E513A',
+  },
+  modeToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modeToggleTextActive: {
+    color: '#FFFFFF',
+  },
+  fullRouteQuickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 4,
+    gap: 4,
+  },
+  fullRouteQuickText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E513A',
+  },
+  googleMapContainer: {
+    flex: 1,
+    backgroundColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mapLoadingOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    padding: 16,
+    borderRadius: 12,
+  },
+  mapLoadingText: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E513A',
+  },
+  googleLiveOverlay: {
+    position: 'absolute',
+    bottom: 80,
+    left: 12,
+    right: 12,
+    alignItems: 'center',
+  },
+  openGoogleMapsAppBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E513A',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 25,
+    gap: 8,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 6,
+  },
+  openGoogleMapsAppText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   sidebar: {
-    width: 72,
+    width: 76,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderLeftWidth: 1,
     borderLeftColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOffset: { width: -2, height: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
   },
   sidebarTitle: {
     fontSize: 14,
@@ -501,26 +899,26 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   binCircleGreen: {
-    backgroundColor: '#A7F3D0', // Light green matching prototype
+    backgroundColor: '#A7F3D0',
   },
   binCircleRed: {
-    backgroundColor: '#FCA5A5', // Soft salmon red matching prototype
+    backgroundColor: '#FCA5A5',
   },
   binCircleText: {
     fontSize: 16,
     fontWeight: '800',
   },
   binCircleTextGreen: {
-    color: '#065F46', // Dark green text
+    color: '#065F46',
   },
   binCircleTextRed: {
-    color: '#991B1B', // Dark red text
+    color: '#991B1B',
   },
   pinInfoToast: {
     position: 'absolute',
-    top: 14,
-    left: 14,
-    right: 14,
+    top: 52,
+    left: 10,
+    right: 10,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     paddingVertical: 8,
@@ -552,6 +950,14 @@ const styles = StyleSheet.create({
   pinInfoLocation: {
     fontSize: 10,
     color: '#64748B',
+  },
+  pinMapBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    marginLeft: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pinToggleBtn: {
     paddingVertical: 4,
@@ -588,3 +994,4 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 });
+

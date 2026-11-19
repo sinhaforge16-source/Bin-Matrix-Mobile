@@ -44,15 +44,28 @@ interface RegisteredUser {
   password?: string;
 }
 
+interface DriverProfile {
+  name: string;
+  id: string;
+  email: string;
+  truckNumber: string;
+}
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('splash');
   const [language, setLanguage] = useState<Language>('en');
-  const [driverId, setDriverId] = useState<string>('DRV-22546');
+  const [driverId, setDriverId] = useState<string>('DRI-PLA-001');
+  const [driverProfile, setDriverProfile] = useState<DriverProfile>({
+    name: 'G. Kamal',
+    id: 'DRI-PLA-001',
+    email: 'kamal@binmatrix.com',
+    truckNumber: 'TRK-PLA-001',
+  });
   const [userProfile, setUserProfile] = useState<RegisteredUser | null>({
-    name: 'Hashibara inosuke',
+    name: 'Admin Manager',
     location: 'Colombo 07',
-    email: 'inosuke@gmail.com',
-    binKey: 'BIN-AA123',
+    email: 'admin@binmatrix.com',
+    binKey: 'Deh-2213-Ai',
   });
 
   return (
@@ -107,7 +120,7 @@ export default function App() {
               setUserProfile((prev) => ({
                 name: profile.name,
                 location: prev?.location || 'Colombo, Sri Lanka',
-                email: prev?.email || 'inosuke@gmail.com',
+                email: profile.email || prev?.email || 'admin@binmatrix.com',
                 binKey: profile.binKey,
                 password: prev?.password,
               }));
@@ -123,7 +136,7 @@ export default function App() {
           <DashboardScreen
             language={language}
             userProfile={
-              userProfile || { name: 'Hashibara inosuke', binKey: 'BIN-AA123' }
+              userProfile || { name: 'Admin Manager', binKey: 'Deh-2213-Ai' }
             }
             onNavigateChatbot={() => setCurrentScreen('chatbot')}
             onNavigateAccount={() => setCurrentScreen('account')}
@@ -145,9 +158,9 @@ export default function App() {
             onLanguageChange={setLanguage}
             userProfile={
               userProfile || {
-                name: 'Hashibara inosuke',
-                email: 'inosuke@gmail.com',
-                binKey: 'BIN-AA123',
+                name: 'Admin Manager',
+                email: 'admin@binmatrix.com',
+                binKey: 'Deh-2213-Ai',
               }
             }
             onNavigateHome={() => setCurrentScreen('dashboard')}
@@ -170,8 +183,16 @@ export default function App() {
         {currentScreen === 'driverLogin' && (
           <DriverLoginScreen
             language={language}
-            onLoginSuccess={(id) => {
+            onLoginSuccess={(id, profile) => {
               setDriverId(id);
+              if (profile) {
+                setDriverProfile({
+                  name: profile.name,
+                  id: profile.id,
+                  email: profile.email,
+                  truckNumber: profile.truckNumber || 'TRK-PLA-001',
+                });
+              }
               setCurrentScreen('driverHome');
             }}
             onBack={() => setCurrentScreen('driverAuthHome')}
@@ -210,12 +231,7 @@ export default function App() {
         {currentScreen === 'driverAccount' && (
           <DriverAccountScreen
             language={language}
-            driverProfile={{
-              name: 'Hashibara inosuke',
-              id: 'DRI-AA123',
-              email: 'inosuke@gmail.com',
-              truckNumber: 'CAN-2258',
-            }}
+            driverProfile={driverProfile}
             onNavigateHome={() => setCurrentScreen('driverRoute')}
             onNavigateMap={() => setCurrentScreen('driverMapView')}
             onLogout={() => setCurrentScreen('driverLogin')}

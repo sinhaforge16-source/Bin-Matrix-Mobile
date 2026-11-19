@@ -23,6 +23,7 @@ import {
 } from '../components/ChatIcons';
 import { ReportedWasteVector } from '../components/ReportedWasteVector';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
 
 interface ChatMessage {
   id: string;
@@ -74,15 +75,31 @@ export const ChatbotScreen: React.FC<Props> = ({
   const handleSendMessage = () => {
     if (!inputText.trim()) return;
 
+    const userText = inputText.trim();
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       sender: 'user',
-      text: inputText.trim(),
+      text: userText,
       time: '10.00 am',
     };
 
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+
+    // Try reporting to backend reports API
+    try {
+      const today = new Date();
+      const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(
+        today.getMonth() + 1
+      ).padStart(2, '0')}/${today.getFullYear()}`;
+      apiService.createReport({
+        category: 'Organic waste',
+        date: dateStr,
+        notCleaned: 1,
+      }).catch(() => {});
+    } catch {
+      // Non-blocking
+    }
 
     // Simulated intelligent bot reply
     setTimeout(() => {
@@ -92,7 +109,7 @@ export const ChatbotScreen: React.FC<Props> = ({
         text:
           language === 'si'
             ? 'ස්තූතියි! නාගරික අපද්‍රව්‍ය කළමනාකරණ කණ්ඩායම ඔබගේ ස්ථානයට පිටත් කර ඇත.'
-            : 'Thank you! The municipal waste management team has been dispatched to your location.',
+            : 'Thank you! The municipal waste management team has been notified and dispatched to your area.',
         time: '10.01 am',
       };
       setMessages((prev) => [...prev, botReply]);
@@ -109,6 +126,20 @@ export const ChatbotScreen: React.FC<Props> = ({
     };
 
     setMessages((prev) => [...prev, locMsg]);
+
+    try {
+      const today = new Date();
+      const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(
+        today.getMonth() + 1
+      ).padStart(2, '0')}/${today.getFullYear()}`;
+      apiService.createReport({
+        category: 'Plastic',
+        date: dateStr,
+        notCleaned: 1,
+      }).catch(() => {});
+    } catch {
+      // Non-blocking
+    }
 
     setTimeout(() => {
       const botReply: ChatMessage = {

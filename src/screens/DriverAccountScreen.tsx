@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
 } from '../components/ChatIcons';
 import { UKFlag, SriLankaFlag } from '../components/FlagIcons';
 import { Language, TRANSLATIONS } from '../utils/translations';
+import { apiService } from '../services/apiService';
 
 interface Props {
   language?: Language;
@@ -86,10 +87,10 @@ export const DriverAccountScreen: React.FC<Props> = ({
   language = 'en',
   onLanguageChange,
   driverProfile = {
-    name: 'Hashibara inosuke',
-    id: 'DRI-AA123',
-    email: 'inosuke@gmail.com',
-    truckNumber: 'CAN-2258',
+    name: 'G. Kamal',
+    id: 'DRI-PLA-001',
+    email: 'kamal@binmatrix.com',
+    truckNumber: 'TRK-PLA-001',
   },
   onNavigateHome,
   onNavigateMap,
@@ -97,12 +98,52 @@ export const DriverAccountScreen: React.FC<Props> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
+  const [liveProfile, setLiveProfile] = useState(driverProfile);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDriverDetails = async () => {
+      try {
+        const res = await apiService.getDriverById(driverProfile.id);
+        if (isMounted && res && res.success && res.data) {
+          const d = res.data;
+          setLiveProfile((prev) => ({
+            ...prev,
+            name: d.name || prev.name,
+            email: d.email || prev.email,
+            id: d.driverId || prev.id,
+          }));
+        }
+      } catch {
+        // Keep current profile
+      }
+    };
+
+    fetchDriverDetails();
+    return () => {
+      isMounted = false;
+    };
+  }, [driverProfile.id]);
 
   const toggleLanguage = () => {
     const nextLang: Language = language === 'en' ? 'si' : 'en';
     if (onLanguageChange) {
       onLanguageChange(nextLang);
     }
+  };
+
+  const handleLogoutPress = () => {
+    Alert.alert(t.logOutConfirmTitle, t.logOutConfirmMsg, [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.logOut,
+        style: 'destructive',
+        onPress: () => {
+          apiService.clearAuth();
+          onLogout();
+        },
+      },
+    ]);
   };
 
   return (
@@ -123,8 +164,8 @@ export const DriverAccountScreen: React.FC<Props> = ({
           {/* Avatar Section */}
           <View style={styles.avatarSection}>
             <DriverAvatarGraphic size={106} />
-            <Text style={styles.userName}>{driverProfile.name}</Text>
-            <Text style={styles.driverId}>{driverProfile.id}</Text>
+            <Text style={styles.userName}>{liveProfile.name}</Text>
+            <Text style={styles.driverId}>{liveProfile.id}</Text>
           </View>
 
           {/* Form Fields Section matching prototype */}
@@ -136,7 +177,7 @@ export const DriverAccountScreen: React.FC<Props> = ({
                 <View style={styles.iconWrapper}>
                   <MailIcon size={20} color="#000000" />
                 </View>
-                <Text style={styles.fieldValue}>{driverProfile.email}</Text>
+                <Text style={styles.fieldValue}>{liveProfile.email}</Text>
               </View>
             </View>
 
@@ -144,7 +185,7 @@ export const DriverAccountScreen: React.FC<Props> = ({
             <View style={styles.fieldItem}>
               <Text style={styles.fieldLabel}>{t.truckNumberLabel}</Text>
               <View style={styles.pillCard}>
-                <Text style={styles.fieldValue}>{driverProfile.truckNumber}</Text>
+                <Text style={styles.fieldValue}>{liveProfile.truckNumber}</Text>
               </View>
             </View>
 
@@ -173,12 +214,7 @@ export const DriverAccountScreen: React.FC<Props> = ({
             {/* Log Out CTA Button */}
             <TouchableOpacity
               style={styles.btnLogOut}
-              onPress={() => {
-                Alert.alert(t.logOutConfirmTitle, t.logOutConfirmMsg, [
-                  { text: t.cancel, style: 'cancel' },
-                  { text: t.logOut, style: 'destructive', onPress: onLogout },
-                ]);
-              }}
+              onPress={handleLogoutPress}
               activeOpacity={0.88}
             >
               <Text style={styles.btnLogOutText}>{t.logOut}</Text>
@@ -259,50 +295,43 @@ const styles = StyleSheet.create({
   },
   avatarSection: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
   userName: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#0F172A',
-    marginTop: 14,
-    marginBottom: 4,
-    textAlign: 'center',
+    marginTop: 12,
   },
   driverId: {
     fontSize: 13,
-    color: '#64748B',
     fontWeight: '600',
+    color: '#15803D',
+    marginTop: 2,
     letterSpacing: 0.5,
   },
   fieldsGroup: {
-    width: '100%',
+    gap: 16,
   },
   fieldItem: {
-    marginBottom: 16,
+    gap: 6,
   },
   fieldLabel: {
-    fontSize: 13,
-    color: '#1E293B',
+    fontSize: 12,
     fontWeight: '600',
-    marginBottom: 6,
+    color: '#334155',
     marginLeft: 4,
   },
   pillCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#BCE8BA', // Light green pill matching prototype
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#98D894',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
     justifyContent: 'space-between',
-    shadowColor: '#1E513A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.2,
+    borderColor: '#94A3B8',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    height: 48,
   },
   pillLeftGroup: {
     flexDirection: 'row',
@@ -310,31 +339,31 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   iconWrapper: {
-    marginRight: 12,
+    marginRight: 10,
   },
   fieldValue: {
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '600',
     color: '#0F172A',
-    fontWeight: '500',
   },
   btnLogOut: {
-    backgroundColor: '#1E513A',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 24,
-    marginTop: 20,
     gap: 8,
-    shadowColor: '#1E513A',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.22,
-    shadowRadius: 5,
+    backgroundColor: '#DC2626',
+    borderRadius: 24,
+    height: 48,
+    marginTop: 8,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
     elevation: 3,
   },
   btnLogOutText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
