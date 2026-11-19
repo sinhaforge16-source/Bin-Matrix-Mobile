@@ -149,6 +149,7 @@ export default function App() {
             language={language}
             onNavigateHome={() => setCurrentScreen('dashboard')}
             onNavigateAccount={() => setCurrentScreen('account')}
+            userProfile={userProfile}
           />
         )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -27,10 +27,12 @@ import { apiService } from '../services/apiService';
 
 interface ChatMessage {
   id: string;
-  sender: 'bot' | 'user';
+  sender: 'bot' | 'user' | 'operator';
   text?: string;
   isImage?: boolean;
+  imageUri?: string;
   isLocation?: boolean;
+  locationUrl?: string;
   time: string;
 }
 
@@ -38,118 +40,253 @@ interface Props {
   language?: Language;
   onNavigateHome: () => void;
   onNavigateAccount: () => void;
+  userProfile?: {
+    name?: string;
+    email?: string;
+    location?: string;
+    binKey?: string;
+  } | null;
 }
 
 export const ChatbotScreen: React.FC<Props> = ({
   language = 'en',
   onNavigateHome,
   onNavigateAccount,
+  userProfile,
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
   const scrollViewRef = useRef<any>(null);
   const [inputText, setInputText] = useState('');
 
-  // Initial messages matching the mockup with localization
+  const currentUserId = userProfile?.binKey || userProfile?.email || 'VI-123';
+  const currentUserName = userProfile?.name || 'Kasun Perera';
+
+  const formatCurrentTime = () => {
+    const now = new Date();
+    let hours = now.getHours();
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    hours = hours % 12 || 12;
+    return `${hours}.${minutes} ${ampm}`;
+  };
+
+  // Initial messages
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
-      id: '1',
+      id: 'init-1',
       sender: 'bot',
       text: t.botGreeting,
       time: '9.57 am',
     },
-    {
-      id: '2',
-      sender: 'user',
-      isImage: true,
-      time: '9.58 am',
-    },
-    {
-      id: '3',
-      sender: 'bot',
-      text: t.botAskLocation,
-      time: '9.59 am',
-    },
   ]);
 
-  const handleSendMessage = () => {
-    if (!inputText.trim()) return;
+  // Load chat messages from backend on mount and poll for operator updates
+  useEffect(() => {
+    let isMounted = true;
 
-    const userText = inputText.trim();
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      sender: 'user',
-      text: userText,
-      time: '10.00 am',
+    const fetchMessages = async () => {
+      try {
+        const res = await apiService.getChatMessages(currentUserId);
+        if (isMounted && res && res.data && res.data.length > 0) {
+          const backendMessages: ChatMessage[] = res.data.map((m: any) => ({
+            id: String(m.id || m._id),
+            sender:
+              m.senderRole === 'operator'
+                ? 'operator'
+                : m.senderRole === 'bot'
+                ? 'bot'
+                : 'user',
+            text: m.messageText,
+            isImage: Boolean(m.imageAttachment || m.type === 'image'),
+            imageUri: m.imageAttachment,
+            isLocation: Boolean(m.mapLocationPin || m.locationUrl),
+            locationUrl: m.mapLocationPin?.url || m.locationUrl,
+            time: m.timeString || formatCurrentTime(),
+          }));
+
+          setMessages(backendMessages);
+        }
+      } catch (err) {
+        // Graceful offline fallback
+      }
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInputText('');
+    fetchMessages();
+    const pollInterval = setInterval(fetchMessages, 3500);
 
-    // Try reporting to backend reports API
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [currentUserId]);
+
+  // 1. Citizen sends garbage photo -> Bot automatically asks: "Sir, please send your current location"
+  const handleSendImage = async () => {
+    const timeStr = formatCurrentTime();
+    const tempId = 'temp-' + Date.now();
+
+    const userImgMsg: ChatMessage = {
+      id: tempId,
+      sender: 'user',
+      isImage: true,
+      text: 'Reported garbage photo',
+      time: timeStr,
+    };
+
+    setMessages((prev) => [...prev, userImgMsg]);
+
     try {
-      const today = new Date();
-      const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(
-        today.getMonth() + 1
-      ).padStart(2, '0')}/${today.getFullYear()}`;
-      apiService.createReport({
-        category: 'Organic waste',
-        date: dateStr,
-        notCleaned: 1,
-      }).catch(() => {});
-    } catch {
-      // Non-blocking
-    }
+      const res = await apiService.sendChatMessage({
+        userId: currentUserId,
+        senderName: currentUserName,
+        senderRole: 'user',
+        channel: 'mobile_app',
+        imageAttachment:
+          'https://images.unsplash.com/photo-1530587191325-3db32d826c18?w=800&auto=format&fit=crop&q=80',
+        messageText: 'Reported garbage photo from mobile app',
+      });
 
-    // Simulated intelligent bot reply
-    setTimeout(() => {
-      const botReply: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text:
-          language === 'si'
-            ? 'ස්තූතියි! නාගරික අපද්‍රව්‍ය කළමනාකරණ කණ්ඩායම ඔබගේ ස්ථානයට පිටත් කර ඇත.'
-            : 'Thank you! The municipal waste management team has been notified and dispatched to your area.',
-        time: '10.01 am',
-      };
-      setMessages((prev) => [...prev, botReply]);
-    }, 900);
+      if (res && res.botReply) {
+        const botReplyMsg: ChatMessage = {
+          id: String(res.botReply._id || Date.now() + 1),
+          sender: 'bot',
+          text: res.botReply.messageText || t.botAskLocation,
+          time: res.botReply.timeString || timeStr,
+        };
+        setMessages((prev) => [...prev, botReplyMsg]);
+      } else {
+        setTimeout(() => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: String(Date.now() + 1),
+              sender: 'bot',
+              text: t.botAskLocation,
+              time: timeStr,
+            },
+          ]);
+        }, 500);
+      }
+    } catch (err) {
+      setTimeout(() => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: String(Date.now() + 1),
+            sender: 'bot',
+            text: t.botAskLocation,
+            time: timeStr,
+          },
+        ]);
+      }, 500);
+    }
   };
 
-  const handleSendLocation = () => {
+  // 2. Citizen sends location coordinates -> Bot acknowledges, web user can now save manually
+  const handleSendLocation = async () => {
+    const timeStr = formatCurrentTime();
+    const tempId = 'temp-' + Date.now();
+
     const locMsg: ChatMessage = {
-      id: Date.now().toString(),
+      id: tempId,
       sender: 'user',
       isLocation: true,
       text: t.gpsReportedText,
-      time: '10.00 am',
+      time: timeStr,
     };
 
     setMessages((prev) => [...prev, locMsg]);
 
     try {
-      const today = new Date();
-      const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(
-        today.getMonth() + 1
-      ).padStart(2, '0')}/${today.getFullYear()}`;
-      apiService.createReport({
-        category: 'Plastic',
-        date: dateStr,
-        notCleaned: 1,
-      }).catch(() => {});
-    } catch {
+      const res = await apiService.sendChatMessage({
+        userId: currentUserId,
+        senderName: currentUserName,
+        senderRole: 'user',
+        channel: 'mobile_app',
+        mapLocationPin: {
+          lat: 6.9388,
+          lng: 80.0160,
+          address: 'Ranala Junction, Hanwella Road',
+          url: 'https://www.google.com/maps/search/?api=1&query=6.9388,80.0160',
+        },
+        messageText: 'https://maps.app.goo.gl/iXuHwxJhcifJZUT7A',
+      });
+
+      if (res && res.botReply) {
+        const botReplyMsg: ChatMessage = {
+          id: String(res.botReply._id || Date.now() + 1),
+          sender: 'bot',
+          text: res.botReply.messageText || t.botLocationConfirmed,
+          time: res.botReply.timeString || timeStr,
+        };
+        setMessages((prev) => [...prev, botReplyMsg]);
+      } else {
+        setTimeout(() => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: String(Date.now() + 1),
+              sender: 'bot',
+              text: t.botLocationConfirmed,
+              time: timeStr,
+            },
+          ]);
+        }, 500);
+      }
+    } catch (err) {
+      setTimeout(() => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: String(Date.now() + 1),
+            sender: 'bot',
+            text: t.botLocationConfirmed,
+            time: timeStr,
+          },
+        ]);
+      }, 500);
+    }
+  };
+
+  // 3. Citizen sends text message
+  const handleSendMessage = async () => {
+    if (!inputText.trim()) return;
+
+    const userText = inputText.trim();
+    const timeStr = formatCurrentTime();
+    setInputText('');
+
+    const userMsg: ChatMessage = {
+      id: 'temp-' + Date.now(),
+      sender: 'user',
+      text: userText,
+      time: timeStr,
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    try {
+      const res = await apiService.sendChatMessage({
+        userId: currentUserId,
+        senderName: currentUserName,
+        senderRole: 'user',
+        channel: 'mobile_app',
+        messageText: userText,
+      });
+
+      if (res && res.botReply) {
+        const botReplyMsg: ChatMessage = {
+          id: String(res.botReply._id || Date.now() + 1),
+          sender: 'bot',
+          text: res.botReply.messageText,
+          time: res.botReply.timeString || timeStr,
+        };
+        setMessages((prev) => [...prev, botReplyMsg]);
+      }
+    } catch (err) {
       // Non-blocking
     }
-
-    setTimeout(() => {
-      const botReply: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: t.botLocationConfirmed,
-        time: '10.01 am',
-      };
-      setMessages((prev) => [...prev, botReply]);
-    }, 900);
   };
 
   return (
@@ -157,7 +294,12 @@ export const ChatbotScreen: React.FC<Props> = ({
       <View style={styles.container}>
         {/* Top Header */}
         <View style={styles.topHeader}>
-          <Text style={styles.headerTitle}>{t.chatbotTitle}</Text>
+          <View>
+            <Text style={styles.headerTitle}>{t.chatbotTitle}</Text>
+            <Text style={styles.headerSubtitle}>
+              Connected to Municipal Bot • 24/7 Live
+            </Text>
+          </View>
           <TouchableOpacity
             style={styles.profileBtn}
             onPress={onNavigateAccount}
@@ -177,12 +319,31 @@ export const ChatbotScreen: React.FC<Props> = ({
             ref={scrollViewRef}
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+            onContentSizeChange={() =>
+              scrollViewRef.current?.scrollToEnd({ animated: true })
+            }
           >
             {messages.map((msg) => {
-              const isBot = msg.sender === 'bot';
+              // 1. Municipal Operator Message (Saved Location Confirmation)
+              if (msg.sender === 'operator') {
+                return (
+                  <View key={msg.id} style={styles.operatorMessageRow}>
+                    <View style={styles.operatorAvatarWrapper}>
+                      <Text style={styles.operatorBadgeIcon}>🛡️</Text>
+                    </View>
+                    <View style={styles.operatorBubble}>
+                      <Text style={styles.operatorHeader}>
+                        Municipal Operator Verified
+                      </Text>
+                      <Text style={styles.operatorMessageText}>{msg.text}</Text>
+                      <Text style={styles.operatorTimeText}>{msg.time}</Text>
+                    </View>
+                  </View>
+                );
+              }
 
-              if (isBot) {
+              // 2. Automated Bot Reply Message
+              if (msg.sender === 'bot') {
                 return (
                   <View key={msg.id} style={styles.botMessageRow}>
                     <View style={styles.botAvatarWrapper}>
@@ -196,7 +357,7 @@ export const ChatbotScreen: React.FC<Props> = ({
                 );
               }
 
-              // User message
+              // 3. User Message (Garbage photo, GPS location, or text)
               return (
                 <View key={msg.id} style={styles.userMessageRow}>
                   {msg.isImage ? (
@@ -230,12 +391,22 @@ export const ChatbotScreen: React.FC<Props> = ({
           {/* Floating Pill Chat Input Bar */}
           <View style={styles.inputBarWrapper}>
             <View style={styles.inputPillBar}>
-              {/* Left Action Buttons */}
-              <TouchableOpacity style={styles.inputActionBtn} activeOpacity={0.7}>
+              {/* Left Action Buttons: Send Photo / Camera */}
+              <TouchableOpacity
+                style={styles.inputActionBtn}
+                activeOpacity={0.7}
+                onPress={handleSendImage}
+                testID="btn-send-image"
+              >
                 <Text style={styles.plusSignText}>+</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.inputActionBtn} activeOpacity={0.7}>
+              <TouchableOpacity
+                style={styles.inputActionBtn}
+                activeOpacity={0.7}
+                onPress={handleSendImage}
+                testID="btn-camera-upload"
+              >
                 <CameraIcon size={20} color="#15803D" />
               </TouchableOpacity>
 
@@ -252,11 +423,12 @@ export const ChatbotScreen: React.FC<Props> = ({
                 returnKeyType="send"
               />
 
-              {/* Right Action Buttons */}
+              {/* Right Action Buttons: Location Pin & Send */}
               <TouchableOpacity
                 style={styles.inputActionBtn}
                 onPress={handleSendLocation}
                 activeOpacity={0.7}
+                testID="btn-send-location"
               >
                 <LocationPinIcon size={20} color="#15803D" />
               </TouchableOpacity>
@@ -330,8 +502,14 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#64748B',
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#15803D',
+    fontWeight: '500',
+    marginTop: 1,
   },
   profileBtn: {
     padding: 4,
@@ -377,6 +555,56 @@ const styles = StyleSheet.create({
   botTimeText: {
     fontSize: 10,
     color: '#94A3B8',
+    textAlign: 'right',
+    marginTop: 4,
+  },
+  operatorMessageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    maxWidth: '85%',
+  },
+  operatorAvatarWrapper: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#E0F2FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  operatorBadgeIcon: {
+    fontSize: 14,
+  },
+  operatorBubble: {
+    backgroundColor: '#F0F9FF',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  operatorHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0369A1',
+    marginBottom: 2,
+  },
+  operatorMessageText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#0F172A',
+  },
+  operatorTimeText: {
+    fontSize: 10,
+    color: '#0284C7',
     textAlign: 'right',
     marginTop: 4,
   },
@@ -450,61 +678,82 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
   },
   inputBarWrapper: {
-    paddingHorizontal: 18,
-    paddingBottom: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    paddingTop: 8,
+    backgroundColor: '#FFFFFF',
   },
   inputPillBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#D1FAE5', // Soft pastel mint green from mockup
-    borderRadius: 30,
-    paddingHorizontal: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    paddingHorizontal: 8,
     paddingVertical: 6,
-    shadowColor: '#10B981',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  inputActionBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 2,
   },
   plusSignText: {
     fontSize: 22,
-    color: '#15803D',
-    fontWeight: 'bold',
-    lineHeight: 24,
-  },
-  inputActionBtn: {
-    padding: 6,
+    color: '#64748B',
+    fontWeight: '300',
+    marginTop: -2,
   },
   inputDivider: {
     width: 1,
-    height: 22,
-    backgroundColor: '#6EE7B7',
+    height: 20,
+    backgroundColor: '#E2E8F0',
     marginHorizontal: 4,
   },
   textInput: {
     flex: 1,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    fontSize: 13,
+    fontSize: 14,
     color: '#0F172A',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   sendBtn: {
-    padding: 6,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 2,
   },
   bottomNavBar: {
-    backgroundColor: '#1E3A2F',
+    backgroundColor: '#2D6A4F',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingTop: 14,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    paddingTop: 12,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 8,
   },
   navItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 8,
-    borderRadius: 16,
   },
   navItemActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderBottomWidth: 3,
+    borderBottomColor: '#86EFAC',
   },
 });
+
+export default ChatbotScreen;

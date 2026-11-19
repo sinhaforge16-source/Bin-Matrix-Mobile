@@ -309,6 +309,43 @@ class ApiService {
       body: reportData,
     });
   }
+
+  // ==========================================
+  // 8. CHAT & BOT APIS
+  // ==========================================
+
+  public async getChatMessages(userId: string): Promise<any> {
+    return this.request<any>(`/chat/messages/${encodeURIComponent(userId)}`, {
+      method: 'GET',
+    });
+  }
+
+  public async sendChatMessage(payload: {
+    userId: string;
+    senderName: string;
+    senderRole?: string;
+    channel?: string;
+    messageText?: string;
+    imageAttachment?: string;
+    mapLocationPin?: {
+      lat: number;
+      lng: number;
+      address?: string;
+      url?: string;
+      embedUrl?: string;
+    };
+  }): Promise<any> {
+    return this.request<any>('/chat/messages', {
+      method: 'POST',
+      body: payload,
+    });
+  }
+
+  public async getChatThreads(): Promise<any> {
+    return this.request<any>('/chat/threads', {
+      method: 'GET',
+    });
+  }
 }
 
 export const apiService = new ApiService();
