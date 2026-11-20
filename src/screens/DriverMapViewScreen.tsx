@@ -57,6 +57,41 @@ function lat2tile(lat: number, zoom: number): number {
   );
 }
 
+const MapTileImage: React.FC<{
+  left: number;
+  top: number;
+  url: string;
+  fallbackUrl: string;
+}> = React.memo(({ left, top, url, fallbackUrl }) => {
+  const [currentUrl, setCurrentUrl] = useState(url);
+
+  useEffect(() => {
+    setCurrentUrl(url);
+  }, [url]);
+
+  return (
+    <Image
+      source={{
+        uri: currentUrl,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Mobile; rv:40.0) Gecko/40.0 Firefox/40.0' },
+      }}
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        width: TILE_SIZE,
+        height: TILE_SIZE,
+      }}
+      resizeMode="cover"
+      onError={() => {
+        if (currentUrl !== fallbackUrl) {
+          setCurrentUrl(fallbackUrl);
+        }
+      }}
+    />
+  );
+});
+
 interface MapPinData {
   id: number;
   latitude: number;
@@ -260,7 +295,15 @@ export const DriverMapViewScreen: React.FC<Props> = ({
     const centerPixelX = lngToPixel(centerCoord.lng, zoom);
     const centerPixelY = latToPixel(centerCoord.lat, zoom);
 
-    const tiles: { x: number; y: number; left: number; top: number; url: string; key: string }[] = [];
+    const tiles: {
+      x: number;
+      y: number;
+      left: number;
+      top: number;
+      url: string;
+      fallbackUrl: string;
+      key: string;
+    }[] = [];
     const layerParam = mapType === 'satellite' ? 'y' : 'm';
 
     // 4x4 tile grid around viewport center
@@ -287,6 +330,7 @@ export const DriverMapViewScreen: React.FC<Props> = ({
             left,
             top,
             url: `https://mt1.google.com/vt/lyrs=${layerParam}&x=${tx}&y=${ty}&z=${zoom}`,
+            fallbackUrl: `https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`,
             key: `${zoom}-${tx}-${ty}-${mapType}`,
           });
         }
@@ -334,23 +378,15 @@ export const DriverMapViewScreen: React.FC<Props> = ({
           style={[styles.mapCanvas, { width: mapWidth, height: mapHeight }]}
           {...panResponder.panHandlers}
         >
-          {/* Layer 1: Real Google Map Raster Tiles */}
+          {/* Layer 1: Real Google Map Raster Tiles with Auto Fallback */}
           <View style={StyleSheet.absoluteFill}>
             {visibleTiles.map((tile) => (
-              <Image
+              <MapTileImage
                 key={tile.key}
-                source={{
-                  uri: tile.url,
-                  headers: { 'User-Agent': 'Mozilla/5.0' },
-                }}
-                style={{
-                  position: 'absolute',
-                  left: tile.left,
-                  top: tile.top,
-                  width: TILE_SIZE,
-                  height: TILE_SIZE,
-                }}
-                resizeMode="cover"
+                left={tile.left}
+                top={tile.top}
+                url={tile.url}
+                fallbackUrl={tile.fallbackUrl}
               />
             ))}
           </View>
