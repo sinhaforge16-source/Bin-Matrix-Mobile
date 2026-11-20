@@ -110,6 +110,7 @@ export default function App() {
             }}
             onNavigateLogin={() => setCurrentScreen('login')}
             onBack={() => setCurrentScreen('authHome')}
+            registeredUser={userProfile}
           />
         )}
 

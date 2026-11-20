@@ -111,6 +111,7 @@ class ApiService {
     role?: 'admin' | 'manager' | 'driver' | 'user';
     email?: string;
     fullName?: string;
+    binKey?: string;
   }): Promise<AuthResponse> {
     const res = await this.request<AuthResponse>('/auth/register', {
       method: 'POST',

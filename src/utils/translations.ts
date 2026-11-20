@@ -24,6 +24,7 @@ export interface Translations {
   registerTitle: string;
   registerSubtitle: string;
   namePlaceholder: string;
+  usernameRegisterPlaceholder: string;
   locationPlaceholder: string;
   emailPlaceholder: string;
   passwordPlaceholder: string;
@@ -31,6 +32,8 @@ export interface Translations {
   signUpBtn: string;
   alreadyHaveAccount: string;
   orSignUpWith: string;
+  usernameTakenError: string;
+  binKeyTakenError: string;
 
   // Login
   loginTitle: string;
@@ -114,6 +117,7 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     registerTitle: 'Create an account',
     registerSubtitle: 'Set up your profile and link your smart bin in just a few steps.',
     namePlaceholder: 'Name',
+    usernameRegisterPlaceholder: 'Username',
     locationPlaceholder: 'Location',
     emailPlaceholder: 'E mail',
     passwordPlaceholder: 'Password',
@@ -121,6 +125,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     signUpBtn: 'Sign up',
     alreadyHaveAccount: 'Already have an account',
     orSignUpWith: 'Or sign up with',
+    usernameTakenError: 'This username is already taken. Please choose another username.',
+    binKeyTakenError: 'This Smart Bin Key is already registered to another account. Each bin can only have one registered user.',
 
     loginTitle: 'Hi, welcome back',
     loginSubtitle: 'Your smart bin is waiting, check status and updates instantly.',
@@ -198,6 +204,7 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     registerTitle: 'ගිණුමක් සාදන්න',
     registerSubtitle: 'ඔබගේ පැතිකඩ සකසා පියවර කිහිපයකින් ස්මාර්ට් බඳුන සම්බන්ධ කරන්න.',
     namePlaceholder: 'නම',
+    usernameRegisterPlaceholder: 'පරිශීලක නාමය',
     locationPlaceholder: 'ස්ථානය',
     emailPlaceholder: 'විද්‍යුත් තැපෑල',
     passwordPlaceholder: 'මුරපදය',
@@ -205,6 +212,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     signUpBtn: 'ලියාපදිංචි වන්න',
     alreadyHaveAccount: 'දැනටමත් ගිණුමක් තිබේද?',
     orSignUpWith: 'හෝ මෙයින් ලියාපදිංචි වන්න',
+    usernameTakenError: 'මෙම පරිශීලක නාමය දැනටමත් භාවිතා කර ඇත. වෙනත් නමක් තෝරන්න.',
+    binKeyTakenError: 'මෙම ස්මාර්ට් බඳුන් යතුර දැනටමත් වෙනත් ගිණුමකට ලියාපදිංචි කර ඇත. එක් බඳුනකට එක් ගිණුමක් පමණක් ලියාපදිංචි කළ හැක.',
 
     loginTitle: 'ආයුබෝවන්, නැවත සාදරයෙන් පිළිගනිමු',
     loginSubtitle: 'ඔබගේ ස්මාර්ට් බඳුන සූදානම්, තත්ත්වය ක්ෂණිකව පරීක්ෂා කරන්න.',

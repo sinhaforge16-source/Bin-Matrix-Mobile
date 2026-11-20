@@ -30,6 +30,13 @@ interface Props {
   }) => void;
   onNavigateLogin: () => void;
   onBack?: () => void;
+  registeredUser?: {
+    name: string;
+    email?: string;
+    binKey: string;
+    password?: string;
+    username?: string;
+  } | null;
 }
 
 export const RegisterUserScreen: React.FC<Props> = ({
@@ -37,10 +44,12 @@ export const RegisterUserScreen: React.FC<Props> = ({
   onSignUpSuccess,
   onNavigateLogin,
   onBack,
+  registeredUser,
 }) => {
   const insets = useSafeAreaInsets();
   const t = TRANSLATIONS[language];
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [location, setLocation] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -69,20 +78,63 @@ export const RegisterUserScreen: React.FC<Props> = ({
       return;
     }
 
-    setIsLoading(true);
-    setErrorMessage('');
-
-    const rawUsername = (email.trim() ? email.trim().split('@')[0] : name.trim())
+    const cleanUsername = (username.trim() || (email.trim() ? email.trim().split('@')[0] : name.trim()))
       .toLowerCase()
       .replace(/[^a-z0-9_]/g, '_');
+    const cleanBinKey = binKey.trim().toUpperCase();
+
+    if (!cleanUsername) {
+      Alert.alert(
+        language === 'si' ? 'අවශ්‍ය ක්ෂේත්‍ර' : 'Required Fields',
+        language === 'si'
+          ? 'කරුණාකර පරිශීලක නාමය ඇතුළත් කරන්න.'
+          : 'Please enter a username.'
+      );
+      return;
+    }
+
+    if (!cleanBinKey) {
+      Alert.alert(
+        language === 'si' ? 'අවශ්‍ය ක්ෂේත්‍ර' : 'Required Fields',
+        language === 'si'
+          ? 'කරුණාකර ස්මාර්ට් බඳුන් යතුර ඇතුළත් කරන්න.'
+          : 'Please enter your Smart Bin Key.'
+      );
+      return;
+    }
+
+    // Local check against existing active session/user
+    if (registeredUser) {
+      if (
+        (registeredUser.username && registeredUser.username.toLowerCase() === cleanUsername.toLowerCase()) ||
+        (registeredUser.name && registeredUser.name.toLowerCase() === cleanUsername.toLowerCase())
+      ) {
+        Alert.alert(
+          language === 'si' ? 'ලියාපදිංචිය අවහිර කර ඇත' : 'Registration Blocked',
+          t.usernameTakenError || 'This username is already taken. Please choose another username.'
+        );
+        return;
+      }
+      if (registeredUser.binKey && registeredUser.binKey.toUpperCase() === cleanBinKey.toUpperCase()) {
+        Alert.alert(
+          language === 'si' ? 'ලියාපදිංචිය අවහිර කර ඇත' : 'Registration Blocked',
+          t.binKeyTakenError || 'This Smart Bin Key is already registered to another account. Each bin can only have one registered user.'
+        );
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    setErrorMessage('');
 
     try {
       // Connect to Backend API: POST /api/auth/register
       const response = await apiService.register({
-        username: rawUsername || `user_${Date.now()}`,
+        username: cleanUsername,
         password: password.trim(),
-        email: email.trim() || `${rawUsername || 'user'}@binmatrix.com`,
+        email: email.trim() || `${cleanUsername}@binmatrix.com`,
         fullName: name.trim(),
+        binKey: cleanBinKey,
         role: 'user',
       });
 
@@ -93,19 +145,37 @@ export const RegisterUserScreen: React.FC<Props> = ({
           name: response.user?.fullName || name.trim(),
           location: location.trim() || 'Colombo, Sri Lanka',
           email: response.user?.email || email.trim() || 'user@binmatrix.com',
-          binKey: binKey.trim() || 'BIN-9082-LK',
+          binKey: cleanBinKey,
           password: password.trim(),
         });
       } else {
-        setErrorMessage(response.message || 'Registration failed');
-        Alert.alert(language === 'si' ? 'ලියාපදිංචිය අසාර්ථකයි' : 'Registration Failed', response.message);
+        const failMsg = response.message || 'Registration failed';
+        setErrorMessage(failMsg);
+        Alert.alert(language === 'si' ? 'ලියාපදිංචිය අවහිර කර ඇත' : 'Registration Blocked', failMsg);
       }
     } catch (err: any) {
       setIsLoading(false);
-      const msg = err.message || 'Network error';
+      const msg = err.message || 'Registration failed';
       setErrorMessage(msg);
 
-      // Offer fallback if backend server is not running or unreachable
+      // Check if this is a validation / duplicate rejection from server (e.g. status 400 or duplicate message)
+      const isDuplicateBlocked =
+        err.status === 400 ||
+        err.status === 409 ||
+        msg.toLowerCase().includes('already') ||
+        msg.toLowerCase().includes('duplicate') ||
+        msg.toLowerCase().includes('taken');
+
+      if (isDuplicateBlocked) {
+        // STRICTLY BLOCK - DO NOT OFFER OFFLINE DEMO BYPASS
+        Alert.alert(
+          language === 'si' ? 'ලියාපදිංචිය අවහිර කර ඇත' : 'Registration Blocked',
+          msg
+        );
+        return;
+      }
+
+      // Offer fallback ONLY if backend server is not running or unreachable
       Alert.alert(
         language === 'si' ? 'සම්බන්ධතා ගැටලුවක්' : 'Connection Notice',
         `${msg}\n\n${
@@ -122,7 +192,7 @@ export const RegisterUserScreen: React.FC<Props> = ({
                 name: name.trim(),
                 location: location.trim() || 'Colombo, Sri Lanka',
                 email: email.trim() || 'user@binmatrix.com',
-                binKey: binKey.trim() || 'BIN-9082-LK',
+                binKey: cleanBinKey || 'BIN-9082-LK',
                 password: password.trim(),
               });
             },
@@ -216,6 +286,15 @@ export const RegisterUserScreen: React.FC<Props> = ({
               value={name}
               onChangeText={setName}
               autoCapitalize="words"
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder={t.usernameRegisterPlaceholder || 'Username'}
+              placeholderTextColor="#94A3B8"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
             />
 
             <TextInput
