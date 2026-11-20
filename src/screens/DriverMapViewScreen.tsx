@@ -24,6 +24,12 @@ import {
 } from '../components/CommonIcons';
 import { Language, TRANSLATIONS } from '../utils/translations';
 import { apiService } from '../services/apiService';
+import {
+  RoadCoord,
+  DEFAULT_ROAD_COORDINATES,
+  DEFAULT_ROUTE_STATS,
+  fetchFastestRoadRoute,
+} from '../services/roadRoutingService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -180,6 +186,12 @@ export const DriverMapViewScreen: React.FC<Props> = ({
   });
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Fastest Road Route Geometry & Stats
+  const [roadCoords, setRoadCoords] = useState<RoadCoord[]>(DEFAULT_ROAD_COORDINATES);
+  const [routeStats, setRouteStats] = useState<{ distanceKm: number; durationMinutes: number }>(
+    DEFAULT_ROUTE_STATS
+  );
+
   const mapWidth = SCREEN_WIDTH - 76; // Leave room for right BINS sidebar
   const mapHeight = SCREEN_HEIGHT - insets.top - 70; // Map canvas height
 
@@ -245,6 +257,27 @@ export const DriverMapViewScreen: React.FC<Props> = ({
       isMounted = false;
     };
   }, []);
+
+  // Calculate & Refresh Fastest Driving Route along real streets & roads
+  useEffect(() => {
+    let isMounted = true;
+    const updateRoadRoute = async () => {
+      const waypoints = pins.map((p) => ({ lat: p.latitude, lng: p.longitude }));
+      const result = await fetchFastestRoadRoute(waypoints);
+      if (isMounted && result && result.coordinates.length > 0) {
+        setRoadCoords(result.coordinates);
+        setRouteStats({
+          distanceKm: result.distanceKm,
+          durationMinutes: result.durationMinutes,
+        });
+      }
+    };
+
+    updateRoadRoute();
+    return () => {
+      isMounted = false;
+    };
+  }, [pins]);
 
   const handleTogglePin = async (id: number) => {
     const targetPin = pins.find((p) => p.id === id);
@@ -357,13 +390,28 @@ export const DriverMapViewScreen: React.FC<Props> = ({
     });
   }, [pins, centerCoord, zoom, panOffset, mapWidth, mapHeight]);
 
-  // SVG Polyline Path connecting stops 1 through 6
+  // Compute Screen Coordinates for the Road Driving Polyline following real roads & streets
+  const roadScreenCoords = useMemo(() => {
+    const centerPixelX = lngToPixel(centerCoord.lng, zoom);
+    const centerPixelY = latToPixel(centerCoord.lat, zoom);
+
+    return roadCoords.map((coord) => {
+      const px = lngToPixel(coord.lng, zoom);
+      const py = latToPixel(coord.lat, zoom);
+      return {
+        x: mapWidth / 2 + (px - centerPixelX) + panOffset.x,
+        y: mapHeight / 2 + (py - centerPixelY) + panOffset.y,
+      };
+    });
+  }, [roadCoords, centerCoord, zoom, panOffset, mapWidth, mapHeight]);
+
+  // SVG Polyline Path following real road networks
   const polylinePath = useMemo(() => {
-    if (pinScreenCoords.length === 0) return '';
-    return pinScreenCoords
-      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.screenX} ${p.screenY}`)
+    if (roadScreenCoords.length === 0) return '';
+    return roadScreenCoords
+      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
       .join(' ');
-  }, [pinScreenCoords]);
+  }, [roadScreenCoords]);
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
@@ -391,32 +439,42 @@ export const DriverMapViewScreen: React.FC<Props> = ({
             ))}
           </View>
 
-          {/* Layer 2: SVG Route Polyline */}
+          {/* Layer 2: SVG Fastest Road Driving Polyline */}
           <Svg
             style={StyleSheet.absoluteFill}
             width={mapWidth}
             height={mapHeight}
             pointerEvents="none"
           >
-            {/* Route Outer Glow / Shadow */}
+            {/* Road Route Casing / Outer Shadow */}
             <Path
               d={polylinePath}
-              stroke="#0369A1"
-              strokeWidth="5"
+              stroke="#1E3A8A"
+              strokeWidth="7"
               strokeLinecap="round"
               strokeLinejoin="round"
               fill="none"
               opacity={0.35}
             />
-            {/* Route Dashed Active Driving Polyline */}
+            {/* Google Maps Fastest Driving Road Polyline */}
             <Path
               d={polylinePath}
-              stroke="#0284C7"
-              strokeWidth="3.5"
-              strokeDasharray="7,5"
+              stroke="#2563EB"
+              strokeWidth="4.5"
               strokeLinecap="round"
               strokeLinejoin="round"
               fill="none"
+            />
+            {/* Center Turn Guidance Dashes */}
+            <Path
+              d={polylinePath}
+              stroke="#FFFFFF"
+              strokeWidth="1.5"
+              strokeDasharray="6,8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+              opacity={0.65}
             />
           </Svg>
 
@@ -573,6 +631,14 @@ export const DriverMapViewScreen: React.FC<Props> = ({
               </TouchableOpacity>
             </View>
           )}
+
+          {/* Layer 7: Fastest Road Route Telemetry Badge */}
+          <View style={styles.routeBadge}>
+            <View style={styles.routeBadgeDot} />
+            <Text style={styles.routeBadgeText}>
+              🛣️ {language === 'si' ? 'වේගවත්ම මාර්ගය (පාරවල් ඔස්සේ)' : 'Fastest Route (Via Roads)'}: {routeStats.distanceKm} km • {routeStats.durationMinutes} min
+            </Text>
+          </View>
         </View>
 
         {/* ==============================================================
@@ -858,5 +924,36 @@ const styles = StyleSheet.create({
   navItemActive: {
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 12,
+  },
+  routeBadge: {
+    position: 'absolute',
+    top: 70,
+    left: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    gap: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
+    zIndex: 9,
+  },
+  routeBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#3B82F6',
+  },
+  routeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 });
