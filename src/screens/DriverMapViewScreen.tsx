@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,14 @@ import {
   Dimensions,
   StatusBar,
   Image,
+  PanResponder,
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, {
   G,
   Path,
-  Rect,
   Circle,
-  Defs,
-  LinearGradient,
-  Stop,
   Text as SvgText,
 } from 'react-native-svg';
 import {
@@ -27,14 +24,41 @@ import {
 } from '../components/CommonIcons';
 import { Language, TRANSLATIONS } from '../utils/translations';
 import { apiService } from '../services/apiService';
-import { googleMapsService } from '../services/googleMapsService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+const TILE_SIZE = 256;
+
+// Mercator Projection Math for Google Maps
+function lngToPixel(lng: number, zoom: number): number {
+  return ((lng + 180) / 360) * Math.pow(2, zoom) * TILE_SIZE;
+}
+
+function latToPixel(lat: number, zoom: number): number {
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const clampedSin = Math.min(Math.max(sinLat, -0.9999), 0.9999);
+  return (
+    (0.5 - Math.log((1 + clampedSin) / (1 - clampedSin)) / (4 * Math.PI)) *
+    Math.pow(2, zoom) *
+    TILE_SIZE
+  );
+}
+
+function lon2tile(lon: number, zoom: number): number {
+  return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
+}
+
+function lat2tile(lat: number, zoom: number): number {
+  const sin = Math.sin((lat * Math.PI) / 180);
+  const clampedSin = Math.min(Math.max(sin, -0.9999), 0.9999);
+  return Math.floor(
+    (0.5 - Math.log((1 + clampedSin) / (1 - clampedSin)) / (4 * Math.PI)) *
+      Math.pow(2, zoom)
+  );
+}
+
 interface MapPinData {
   id: number;
-  x: number;
-  y: number;
   latitude: number;
   longitude: number;
   isCompleted: boolean;
@@ -50,60 +74,10 @@ interface Props {
   onNavigateAccount: () => void;
 }
 
-/**
- * Teardrop Map Pin with centered number
- */
-const MapPinMarker: React.FC<{
-  x: number;
-  y: number;
-  id: number;
-  isCompleted: boolean;
-  onPress: () => void;
-  hasHalo?: boolean;
-}> = ({ x, y, id, isCompleted, onPress, hasHalo = false }) => {
-  const pinColor = isCompleted ? '#16A34A' : '#DC2626';
-
-  return (
-    <G transform={`translate(${x}, ${y})`} onPress={onPress}>
-      {/* Translucent circular radius halo */}
-      {hasHalo && (
-        <Circle cx="0" cy="0" r="30" fill="#94A3B8" fillOpacity="0.22" />
-      )}
-
-      {/* Pin Shadow */}
-      <Circle cx="0" cy="4" r="5" fill="#0F172A" fillOpacity="0.18" />
-
-      {/* Pin Teardrop Shape */}
-      <Path
-        d="M 0 -24 C -11 -24, -18 -17, -18 -6 C -18 4, -4 14, 0 20 C 4 14, 18 4, 18 -6 C 18 -17, 11 -24, 0 -24 Z"
-        fill={pinColor}
-        stroke="#FFFFFF"
-        strokeWidth="1.5"
-      />
-
-      {/* Pin White Inner Circle */}
-      <Circle cx="0" cy="-6" r="9" fill="#FFFFFF" />
-
-      {/* Pin Number */}
-      <SvgText
-        x="0"
-        y="-2.5"
-        fill={pinColor}
-        fontSize="10"
-        fontWeight="bold"
-        textAnchor="middle"
-      >
-        {id}
-      </SvgText>
-    </G>
-  );
-};
-
+// Default stop coordinates centered around Galle Road / Dehiwala - Mount Lavinia, Sri Lanka
 const DEFAULT_PINS: MapPinData[] = [
   {
     id: 1,
-    x: 180,
-    y: 430,
     latitude: 6.8732,
     longitude: 79.8598,
     isCompleted: true,
@@ -112,9 +86,7 @@ const DEFAULT_PINS: MapPinData[] = [
   },
   {
     id: 2,
-    x: 75,
-    y: 360,
-    latitude: 6.8421,
+    latitude: 6.8521,
     longitude: 79.8642,
     isCompleted: true,
     code: 'Deh-2233-Gn',
@@ -122,9 +94,7 @@ const DEFAULT_PINS: MapPinData[] = [
   },
   {
     id: 3,
-    x: 48,
-    y: 285,
-    latitude: 6.8315,
+    latitude: 6.8385,
     longitude: 79.8631,
     isCompleted: false,
     code: 'Deh-2243-Fa',
@@ -132,33 +102,27 @@ const DEFAULT_PINS: MapPinData[] = [
   },
   {
     id: 4,
-    x: 120,
-    y: 175,
-    latitude: 6.892,
-    longitude: 80.0815,
+    latitude: 6.8450,
+    longitude: 79.8780,
     isCompleted: false,
     code: 'Deh-2314-At',
-    location: 'Hanwella Town Center (Stop 4)',
+    location: 'Nedimala / Kawdana Rd (Stop 4)',
   },
   {
     id: 5,
-    x: 280,
-    y: 205,
-    latitude: 6.9271,
-    longitude: 79.8612,
+    latitude: 6.8610,
+    longitude: 79.8720,
     isCompleted: false,
     code: 'Deh-3213-Sw',
-    location: 'Carnegie Hall East, Colombo (Stop 5)',
+    location: 'Kalubowila Hospital Rd (Stop 5)',
   },
   {
     id: 6,
-    x: 185,
-    y: 155,
-    latitude: 6.9319,
-    longitude: 79.8478,
+    latitude: 6.8710,
+    longitude: 79.8680,
     isCompleted: false,
     code: 'Deh-4213-Tm',
-    location: 'Studio 54 North, Fort (Stop 6)',
+    location: 'Dutugemunu St, Pamankada (Stop 6)',
   },
 ];
 
@@ -171,9 +135,40 @@ export const DriverMapViewScreen: React.FC<Props> = ({
   const t = TRANSLATIONS[language];
   const [pins, setPins] = useState<MapPinData[]>(DEFAULT_PINS);
   const [selectedPin, setSelectedPin] = useState<MapPinData | null>(DEFAULT_PINS[1]);
-  const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
-  const [mapImageLoading, setMapImageLoading] = useState(false);
 
+  // Embedded Google Map View State
+  const [zoom, setZoom] = useState<number>(14);
+  const [mapType, setMapType] = useState<'roadmap' | 'satellite'>('roadmap');
+  const [centerCoord, setCenterCoord] = useState<{ lat: number; lng: number }>({
+    lat: 6.8540,
+    lng: 79.8660,
+  });
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const mapWidth = SCREEN_WIDTH - 76; // Leave room for right BINS sidebar
+  const mapHeight = SCREEN_HEIGHT - insets.top - 70; // Map canvas height
+
+  // Pan Responder for Touch Dragging the Google Map
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3,
+      onPanResponderGrant: () => {
+        panStartRef.current = { ...panOffset };
+      },
+      onPanResponderMove: (_, gestureState) => {
+        setPanOffset({
+          x: panStartRef.current.x + gestureState.dx,
+          y: panStartRef.current.y + gestureState.dy,
+        });
+      },
+      onPanResponderRelease: () => {},
+    })
+  ).current;
+
+  // Sync Live Pins with Backend API
   useEffect(() => {
     let isMounted = true;
     const fetchLivePins = async () => {
@@ -206,7 +201,7 @@ export const DriverMapViewScreen: React.FC<Props> = ({
           );
         }
       } catch {
-        // Fallback to default mock pins
+        // Graceful fallback to default mock pins
       }
     };
 
@@ -243,401 +238,264 @@ export const DriverMapViewScreen: React.FC<Props> = ({
     }
   };
 
-  const handleLaunchGoogleMaps = (pin?: MapPinData) => {
-    const target = pin || selectedPin || pins.find((p) => !p.isCompleted) || pins[0];
-    if (target) {
-      googleMapsService.openNavigation(
-        { latitude: target.latitude, longitude: target.longitude },
-        target.code
-      );
+  // Center Google Map directly on a specific pin
+  const handleFocusPin = (pin: MapPinData) => {
+    setSelectedPin(pin);
+    setCenterCoord({ lat: pin.latitude, lng: pin.longitude });
+    setPanOffset({ x: 0, y: 0 });
+  };
+
+  // Recenter Google Map to entire route overview
+  const handleRecenterRoute = () => {
+    setCenterCoord({ lat: 6.8540, lng: 79.8660 });
+    setPanOffset({ x: 0, y: 0 });
+    setZoom(14);
+  };
+
+  // Calculate Visible Google Maps Tiles dynamically for the current viewport
+  const visibleTiles = useMemo(() => {
+    const centerTileX = lon2tile(centerCoord.lng, zoom);
+    const centerTileY = lat2tile(centerCoord.lat, zoom);
+
+    const centerPixelX = lngToPixel(centerCoord.lng, zoom);
+    const centerPixelY = latToPixel(centerCoord.lat, zoom);
+
+    const tiles: { x: number; y: number; left: number; top: number; url: string; key: string }[] = [];
+    const layerParam = mapType === 'satellite' ? 'y' : 'm';
+
+    // 4x4 tile grid around viewport center
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        const tx = centerTileX + dx;
+        const ty = centerTileY + dy;
+        const tileOriginX = tx * TILE_SIZE;
+        const tileOriginY = ty * TILE_SIZE;
+
+        const left = mapWidth / 2 + (tileOriginX - centerPixelX) + panOffset.x;
+        const top = mapHeight / 2 + (tileOriginY - centerPixelY) + panOffset.y;
+
+        // Only include tiles reasonably near visible screen
+        if (
+          left + TILE_SIZE >= -100 &&
+          left <= mapWidth + 100 &&
+          top + TILE_SIZE >= -100 &&
+          top <= mapHeight + 100
+        ) {
+          tiles.push({
+            x: tx,
+            y: ty,
+            left,
+            top,
+            url: `https://mt1.google.com/vt/lyrs=${layerParam}&x=${tx}&y=${ty}&z=${zoom}`,
+            key: `${zoom}-${tx}-${ty}-${mapType}`,
+          });
+        }
+      }
     }
-  };
+    return tiles;
+  }, [centerCoord, zoom, panOffset, mapWidth, mapHeight, mapType]);
 
-  const handleLaunchFullRouteGoogleMaps = () => {
-    const stops = pins.map((p) => ({
-      latitude: p.latitude,
-      longitude: p.longitude,
-    }));
-    googleMapsService.openRouteNavigation(stops, 'Bin Matrix Collection Route');
-  };
+  // Compute Screen Coordinates for Pins & Route Polyline
+  const pinScreenCoords = useMemo(() => {
+    const centerPixelX = lngToPixel(centerCoord.lng, zoom);
+    const centerPixelY = latToPixel(centerCoord.lat, zoom);
 
-  const mapWidth = SCREEN_WIDTH - 76; // Leave room for right BINS sidebar
-  const mapHeight = SCREEN_HEIGHT - insets.top - 70; // Map area above bottom nav
+    return pins.map((p) => {
+      const px = lngToPixel(p.longitude, zoom);
+      const py = latToPixel(p.latitude, zoom);
+      const screenX = mapWidth / 2 + (px - centerPixelX) + panOffset.x;
+      const screenY = mapHeight / 2 + (py - centerPixelY) + panOffset.y;
+      return {
+        ...p,
+        screenX,
+        screenY,
+      };
+    });
+  }, [pins, centerCoord, zoom, panOffset, mapWidth, mapHeight]);
 
-  // Generate Google Static Maps URL
-  const googleMapStaticUrl = googleMapsService.getStaticMapUrl({
-    center: selectedPin
-      ? { latitude: selectedPin.latitude, longitude: selectedPin.longitude }
-      : { latitude: 6.865, longitude: 79.88 },
-    zoom: 13,
-    size: `${Math.round(mapWidth)}x${Math.round(mapHeight)}`,
-    markers: pins.map((p) => ({
-      latitude: p.latitude,
-      longitude: p.longitude,
-      label: String(p.id),
-      color: p.isCompleted ? 'green' : 'red',
-    })),
-    pathCoords: pins.map((p) => ({
-      latitude: p.latitude,
-      longitude: p.longitude,
-    })),
-  });
+  // SVG Polyline Path connecting stops 1 through 6
+  const polylinePath = useMemo(() => {
+    if (pinScreenCoords.length === 0) return '';
+    return pinScreenCoords
+      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.screenX} ${p.screenY}`)
+      .join(' ');
+  }, [pinScreenCoords]);
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Main Map & Sidebar Canvas */}
+      {/* Main Container: Embedded Google Map + Right Sidebar */}
       <View style={styles.mainContainer}>
         {/* ==============================================================
-            MAP CANVAS: VECTOR VIEW OR GOOGLE MAPS VIEW
+            EMBEDDED INTERACTIVE GOOGLE MAP CANVAS
            ============================================================== */}
-        <View style={[styles.mapCanvas, { width: mapWidth, height: mapHeight }]}>
-          {/* Top Controls: Mode Switcher & Quick Google Nav */}
-          <View style={styles.mapModeBar}>
-            <View style={styles.modeToggleGroup}>
-              <TouchableOpacity
-                style={[
-                  styles.modeToggleBtn,
-                  mapMode === 'vector' && styles.modeToggleBtnActive,
-                ]}
-                onPress={() => setMapMode('vector')}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    styles.modeToggleText,
-                    mapMode === 'vector' && styles.modeToggleTextActive,
-                  ]}
-                >
-                  Vector
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modeToggleBtn,
-                  mapMode === 'google' && styles.modeToggleBtnActive,
-                ]}
-                onPress={() => setMapMode('google')}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    styles.modeToggleText,
-                    mapMode === 'google' && styles.modeToggleTextActive,
-                  ]}
-                >
-                  Google Map
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View
+          style={[styles.mapCanvas, { width: mapWidth, height: mapHeight }]}
+          {...panResponder.panHandlers}
+        >
+          {/* Layer 1: Real Google Map Raster Tiles */}
+          <View style={StyleSheet.absoluteFill}>
+            {visibleTiles.map((tile) => (
+              <Image
+                key={tile.key}
+                source={{
+                  uri: tile.url,
+                  headers: { 'User-Agent': 'Mozilla/5.0' },
+                }}
+                style={{
+                  position: 'absolute',
+                  left: tile.left,
+                  top: tile.top,
+                  width: TILE_SIZE,
+                  height: TILE_SIZE,
+                }}
+                resizeMode="cover"
+              />
+            ))}
+          </View>
 
+          {/* Layer 2: SVG Route Polyline */}
+          <Svg
+            style={StyleSheet.absoluteFill}
+            width={mapWidth}
+            height={mapHeight}
+            pointerEvents="none"
+          >
+            {/* Route Outer Glow / Shadow */}
+            <Path
+              d={polylinePath}
+              stroke="#0369A1"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+              opacity={0.35}
+            />
+            {/* Route Dashed Active Driving Polyline */}
+            <Path
+              d={polylinePath}
+              stroke="#0284C7"
+              strokeWidth="3.5"
+              strokeDasharray="7,5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+          </Svg>
+
+          {/* Layer 3: Interactive Numbered Map Pins */}
+          {pinScreenCoords.map((pin) => {
+            const isSelected = selectedPin?.id === pin.id;
+            const pinColor = pin.isCompleted ? '#16A34A' : '#DC2626';
+
+            return (
+              <TouchableOpacity
+                key={pin.id}
+                style={[
+                  styles.pinMarkerWrapper,
+                  {
+                    left: pin.screenX - 16,
+                    top: pin.screenY - 32,
+                  },
+                ]}
+                onPress={() => handleFocusPin(pin)}
+                activeOpacity={0.85}
+              >
+                {/* Active Halo */}
+                {isSelected && (
+                  <View
+                    style={[
+                      styles.pinHalo,
+                      { borderColor: pinColor, backgroundColor: `${pinColor}22` },
+                    ]}
+                  />
+                )}
+
+                {/* Teardrop Pin Marker SVG */}
+                <Svg width={32} height={36} viewBox="0 0 32 36">
+                  {/* Pin Drop Shadow */}
+                  <Circle cx="16" cy="33" r="5" fill="#0F172A" fillOpacity="0.28" />
+
+                  {/* Teardrop Body */}
+                  <Path
+                    d="M 16 2 C 8.5 2 3 7.5 3 15 C 3 22.5 13 30.5 16 34 C 19 30.5 29 22.5 29 15 C 29 7.5 23.5 2 16 2 Z"
+                    fill={pinColor}
+                    stroke="#FFFFFF"
+                    strokeWidth="1.8"
+                  />
+
+                  {/* White Center Circle */}
+                  <Circle cx="16" cy="14" r="7.5" fill="#FFFFFF" />
+
+                  {/* Stop Number */}
+                  <SvgText
+                    x="16"
+                    y="17"
+                    fill={pinColor}
+                    fontSize="9.5"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {pin.id}
+                  </SvgText>
+                </Svg>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Layer 4: Google Watermark Branding (Bottom Left) */}
+          <View style={styles.googleBrandBadge} pointerEvents="none">
+            <Text style={styles.googleBrandText}>Google</Text>
+          </View>
+
+          {/* Layer 5: Map On-Screen Controls (Zoom & Layer Toggle) */}
+          <View style={styles.mapControlsColumn}>
+            {/* Zoom In */}
             <TouchableOpacity
-              style={styles.fullRouteQuickBtn}
-              onPress={handleLaunchFullRouteGoogleMaps}
-              activeOpacity={0.85}
+              style={styles.mapControlBtn}
+              onPress={() => setZoom((z) => Math.min(z + 1, 16))}
+              activeOpacity={0.8}
             >
-              <GoogleMapNavIcon size={16} />
-              <Text style={styles.fullRouteQuickText}>Route</Text>
+              <Text style={styles.mapControlBtnText}>+</Text>
+            </TouchableOpacity>
+
+            {/* Zoom Out */}
+            <TouchableOpacity
+              style={styles.mapControlBtn}
+              onPress={() => setZoom((z) => Math.max(z - 1, 12))}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.mapControlBtnText}>−</Text>
+            </TouchableOpacity>
+
+            {/* Satellite / Road Toggle */}
+            <TouchableOpacity
+              style={[
+                styles.mapControlBtn,
+                mapType === 'satellite' && styles.mapControlBtnActive,
+              ]}
+              onPress={() =>
+                setMapType((m) => (m === 'roadmap' ? 'satellite' : 'roadmap'))
+              }
+              activeOpacity={0.8}
+            >
+              <Text style={styles.mapLayerBtnText}>
+                {mapType === 'roadmap' ? '🛰️' : '🗺️'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Recenter Route */}
+            <TouchableOpacity
+              style={styles.mapControlBtn}
+              onPress={handleRecenterRoute}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.mapLayerBtnText}>🎯</Text>
             </TouchableOpacity>
           </View>
 
-          {mapMode === 'vector' ? (
-            /* 1. DETAILED 2D VECTOR CITY STREET MAP */
-            <Svg width={mapWidth} height={mapHeight} viewBox="0 0 320 520">
-              <Defs>
-                <LinearGradient id="waterGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <Stop offset="0%" stopColor="#CBE5FE" />
-                  <Stop offset="100%" stopColor="#BAE6FD" />
-                </LinearGradient>
-                <LinearGradient id="parkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <Stop offset="0%" stopColor="#DCFCE7" />
-                  <Stop offset="100%" stopColor="#BBF7D0" />
-                </LinearGradient>
-              </Defs>
-
-              {/* Base Background: Warm Map Tone */}
-              <Rect width="320" height="520" fill="#F4EFEA" />
-
-              {/* Colombo Coastal / Water edge (Top Left) */}
-              <Path
-                d="M 0 0 L 110 0 C 95 30, 80 70, 75 110 L 0 110 Z"
-                fill="url(#waterGrad)"
-              />
-              <SvgText x="14" y="24" fill="#0284C7" fontSize="8" fontWeight="600">
-                Colombo Coastal
-              </SvgText>
-
-              {/* Central City Blocks */}
-              <Rect
-                x="15"
-                y="125"
-                width="46"
-                height="58"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="15"
-                y="195"
-                width="46"
-                height="64"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="15"
-                y="270"
-                width="46"
-                height="70"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="15"
-                y="350"
-                width="46"
-                height="74"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-
-              <Rect
-                x="72"
-                y="125"
-                width="54"
-                height="58"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="72"
-                y="195"
-                width="54"
-                height="64"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="72"
-                y="270"
-                width="54"
-                height="70"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="72"
-                y="350"
-                width="54"
-                height="74"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-
-              <Rect
-                x="138"
-                y="125"
-                width="60"
-                height="58"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="138"
-                y="195"
-                width="60"
-                height="64"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="138"
-                y="270"
-                width="60"
-                height="70"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="138"
-                y="350"
-                width="60"
-                height="74"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-
-              <Rect
-                x="210"
-                y="125"
-                width="95"
-                height="58"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="210"
-                y="195"
-                width="95"
-                height="64"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="210"
-                y="270"
-                width="95"
-                height="70"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-              <Rect
-                x="210"
-                y="350"
-                width="95"
-                height="74"
-                rx="4"
-                fill="#EDE4DA"
-                stroke="#E2D7CB"
-                strokeWidth="0.8"
-              />
-
-              {/* Urban Parks */}
-              <Rect
-                x="212"
-                y="18"
-                width="90"
-                height="92"
-                rx="6"
-                fill="url(#parkGrad)"
-                stroke="#86EFAC"
-                strokeWidth="1"
-              />
-              <SvgText
-                x="257"
-                y="65"
-                fill="#15803D"
-                fontSize="9"
-                fontWeight="bold"
-                textAnchor="middle"
-              >
-                Viharamahadevi Park
-              </SvgText>
-
-              {/* Main Road Network */}
-              <Path d="M 0 118 L 320 118" stroke="#FFFFFF" strokeWidth="10" />
-              <Path d="M 0 188 L 320 188" stroke="#FFFFFF" strokeWidth="8" />
-              <Path d="M 0 264 L 320 264" stroke="#FFFFFF" strokeWidth="8" />
-              <Path d="M 0 344 L 320 344" stroke="#FFFFFF" strokeWidth="8" />
-              <Path d="M 0 428 L 320 428" stroke="#FFFFFF" strokeWidth="10" />
-
-              {/* Avenues */}
-              <Path d="M 66 0 L 66 520" stroke="#FFFFFF" strokeWidth="9" />
-              <Path d="M 132 0 L 132 520" stroke="#FFFFFF" strokeWidth="9" />
-              <Path d="M 204 0 L 204 520" stroke="#FFFFFF" strokeWidth="9" />
-
-              {/* Diagonal Galle Road / Marine Drive */}
-              <Path
-                d="M 35 110 L 240 440"
-                stroke="#FDE68A"
-                strokeWidth="11"
-                strokeLinecap="round"
-              />
-              <Path
-                d="M 35 110 L 240 440"
-                stroke="#F59E0B"
-                strokeWidth="1.2"
-                strokeDasharray="6,6"
-              />
-
-              {/* Connecting Driver Route Waypoint Line */}
-              <Path
-                d={`M ${pins[0]?.x} ${pins[0]?.y} L ${pins[1]?.x} ${pins[1]?.y} L ${pins[2]?.x} ${pins[2]?.y} L ${pins[3]?.x} ${pins[3]?.y} L ${pins[4]?.x} ${pins[4]?.y} L ${pins[5]?.x} ${pins[5]?.y}`}
-                stroke="#0284C7"
-                strokeWidth="3"
-                strokeDasharray="5,4"
-                fill="none"
-              />
-
-              {/* Map Pins */}
-              {pins.map((pin) => (
-                <MapPinMarker
-                  key={pin.id}
-                  id={pin.id}
-                  x={pin.x}
-                  y={pin.y}
-                  isCompleted={pin.isCompleted}
-                  hasHalo={pin.id === 2}
-                  onPress={() => setSelectedPin(pin)}
-                />
-              ))}
-            </Svg>
-          ) : (
-            /* 2. GOOGLE MAPS SATELLITE / STATIC ROUTE VIEW */
-            <View style={styles.googleMapContainer}>
-              <Image
-                source={{ uri: googleMapStaticUrl }}
-                style={{ width: mapWidth, height: mapHeight }}
-                resizeMode="cover"
-                onLoadStart={() => setMapImageLoading(true)}
-                onLoadEnd={() => setMapImageLoading(false)}
-              />
-
-              {mapImageLoading && (
-                <View style={styles.mapLoadingOverlay}>
-                  <ActivityIndicator size="large" color="#16A34A" />
-                  <Text style={styles.mapLoadingText}>Loading Google Map...</Text>
-                </View>
-              )}
-
-              {/* Google Maps Live App Direct Launcher Bar */}
-              <View style={styles.googleLiveOverlay}>
-                <TouchableOpacity
-                  style={styles.openGoogleMapsAppBtn}
-                  onPress={() => handleLaunchGoogleMaps(selectedPin || undefined)}
-                  activeOpacity={0.85}
-                >
-                  <GoogleMapNavIcon size={20} />
-                  <Text style={styles.openGoogleMapsAppText}>
-                    Launch Turn-by-Turn in Google Maps
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* Floating Selected Pin Info Card */}
+          {/* Layer 6: Floating Selected Pin / Stop Card */}
           {selectedPin && (
             <View style={styles.pinInfoToast}>
               <View
@@ -655,16 +513,16 @@ export const DriverMapViewScreen: React.FC<Props> = ({
                 </Text>
               </View>
 
-              {/* Launch Google Maps for this pin */}
+              {/* Focus / Center Stop on this Google Map */}
               <TouchableOpacity
                 style={styles.pinMapBtn}
-                onPress={() => handleLaunchGoogleMaps(selectedPin)}
+                onPress={() => handleFocusPin(selectedPin)}
                 activeOpacity={0.8}
               >
                 <GoogleMapNavIcon size={18} />
               </TouchableOpacity>
 
-              {/* Toggle Done/Collect */}
+              {/* Toggle Done / Collect */}
               <TouchableOpacity
                 style={[
                   styles.pinToggleBtn,
@@ -690,6 +548,7 @@ export const DriverMapViewScreen: React.FC<Props> = ({
           <View style={styles.binPillList}>
             {pins.map((pin) => {
               const isGreen = pin.isCompleted;
+              const isCurrent = selectedPin?.id === pin.id;
 
               return (
                 <TouchableOpacity
@@ -697,8 +556,9 @@ export const DriverMapViewScreen: React.FC<Props> = ({
                   style={[
                     styles.binCircle,
                     isGreen ? styles.binCircleGreen : styles.binCircleRed,
+                    isCurrent && styles.binCircleActive,
                   ]}
-                  onPress={() => handleTogglePin(pin.id)}
+                  onPress={() => handleFocusPin(pin)}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -760,111 +620,75 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   mapCanvas: {
-    backgroundColor: '#F4EFEA',
+    backgroundColor: '#E5E7EB',
     position: 'relative',
     overflow: 'hidden',
   },
-  mapModeBar: {
+  pinMarkerWrapper: {
     position: 'absolute',
-    top: 10,
-    left: 10,
-    right: 10,
-    zIndex: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modeToggleGroup: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 3,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
-    elevation: 4,
-  },
-  modeToggleBtn: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-  },
-  modeToggleBtnActive: {
-    backgroundColor: '#1E513A',
-  },
-  modeToggleText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  modeToggleTextActive: {
-    color: '#FFFFFF',
-  },
-  fullRouteQuickBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 20,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
-    elevation: 4,
-    gap: 4,
-  },
-  fullRouteQuickText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1E513A',
-  },
-  googleMapContainer: {
-    flex: 1,
-    backgroundColor: '#E2E8F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mapLoadingOverlay: {
-    position: 'absolute',
+    width: 32,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
-    padding: 16,
-    borderRadius: 12,
+    zIndex: 5,
   },
-  mapLoadingText: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1E513A',
-  },
-  googleLiveOverlay: {
+  pinHalo: {
     position: 'absolute',
-    bottom: 80,
-    left: 12,
+    top: -6,
+    left: -6,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+  },
+  googleBrandBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.78)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  googleBrandText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.5,
+  },
+  mapControlsColumn: {
+    position: 'absolute',
     right: 12,
-    alignItems: 'center',
-  },
-  openGoogleMapsAppBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E513A',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 25,
+    bottom: 20,
     gap: 8,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 6,
+    zIndex: 8,
   },
-  openGoogleMapsAppText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  mapControlBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 3,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mapControlBtnActive: {
+    backgroundColor: '#1E513A',
+  },
+  mapControlBtnText: {
+    fontSize: 20,
     fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 22,
+  },
+  mapLayerBtnText: {
+    fontSize: 16,
   },
   sidebar: {
     width: 76,
@@ -898,6 +722,11 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  binCircleActive: {
+    borderWidth: 2.5,
+    borderColor: '#1E513A',
+    transform: [{ scale: 1.08 }],
+  },
   binCircleGreen: {
     backgroundColor: '#A7F3D0',
   },
@@ -916,7 +745,7 @@ const styles = StyleSheet.create({
   },
   pinInfoToast: {
     position: 'absolute',
-    top: 52,
+    top: 14,
     left: 10,
     right: 10,
     backgroundColor: '#FFFFFF',
@@ -927,11 +756,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.16,
+    shadowOpacity: 0.18,
     shadowRadius: 6,
-    elevation: 5,
+    elevation: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    zIndex: 10,
   },
   pinStatusDot: {
     width: 10,
@@ -994,4 +824,3 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 });
-
